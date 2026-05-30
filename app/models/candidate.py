@@ -1,0 +1,9 @@
+from pydantic import BaseModel
+
+
+class Candidate(BaseModel):
+    url: str
+    title: str
+    duration_seconds: float
+    channel_name: str
+    view_count: int
