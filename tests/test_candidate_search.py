@@ -1,0 +1,104 @@
+from unittest.mock import MagicMock, patch
+
+from app.models.candidate import Candidate
+from app.models.download_intent import DownloadIntent
+from app.pipeline.candidate_search import search_candidates
+
+_FAKE_ENTRIES = [
+    {
+        "id": "abc123",
+        "url": "https://www.youtube.com/watch?v=abc123",
+        "title": "Pink Floyd - Comfortably Numb",
+        "duration": 382,
+        "channel": "Pink Floyd Official",
+        "view_count": 50000000,
+    },
+    {
+        "id": "def456",
+        "url": "https://www.youtube.com/watch?v=def456",
+        "title": "Comfortably Numb - Pink Floyd (Lyrics)",
+        "duration": 380,
+        "channel": "Lyrics Channel",
+        "view_count": 8000000,
+    },
+]
+
+_FAKE_VIDEO_INFO = {
+    "id": "xyz789",
+    "title": "Pink Floyd - Comfortably Numb (Official Audio)",
+    "duration": 382,
+    "channel": "Pink Floyd Official",
+    "view_count": 12000000,
+}
+
+
+def _make_plain_intent() -> DownloadIntent:
+    return DownloadIntent(target_type="Track", artist="Pink Floyd", title="Comfortably Numb")
+
+
+def _make_hint_intent(url: str) -> DownloadIntent:
+    return DownloadIntent(
+        target_type="Track",
+        artist="Pink Floyd",
+        title="Comfortably Numb",
+        resource_hint=url,
+    )
+
+
+def test_search_returns_candidates_for_plain_intent() -> None:
+    intent = _make_plain_intent()
+    with patch("app.pipeline.candidate_search.yt_dlp.YoutubeDL") as MockYDL:
+        mock_ydl = MagicMock()
+        MockYDL.return_value.__enter__.return_value = mock_ydl
+        mock_ydl.extract_info.return_value = {"entries": _FAKE_ENTRIES}
+
+        candidates = search_candidates(intent)
+
+    assert len(candidates) == 2
+    first = candidates[0]
+    assert isinstance(first, Candidate)
+    assert first.url == "https://www.youtube.com/watch?v=abc123"
+    assert first.title == "Pink Floyd - Comfortably Numb"
+    assert first.duration_seconds == 382.0
+    assert first.channel_name == "Pink Floyd Official"
+    assert first.view_count == 50000000
+
+    call_args = mock_ydl.extract_info.call_args
+    assert "ytsearch" in call_args[0][0]
+
+
+def test_resource_hint_bypasses_search() -> None:
+    hint_url = "https://www.youtube.com/watch?v=xyz789"
+    intent = _make_hint_intent(hint_url)
+
+    with patch("app.pipeline.candidate_search.yt_dlp.YoutubeDL") as MockYDL:
+        mock_ydl = MagicMock()
+        MockYDL.return_value.__enter__.return_value = mock_ydl
+        mock_ydl.extract_info.return_value = _FAKE_VIDEO_INFO
+
+        search_candidates(intent)
+
+    call_args = mock_ydl.extract_info.call_args
+    actual_url = call_args[0][0]
+    assert actual_url == hint_url
+    assert "ytsearch" not in actual_url
+
+
+def test_resource_hint_returns_sole_candidate() -> None:
+    hint_url = "https://www.youtube.com/watch?v=xyz789"
+    intent = _make_hint_intent(hint_url)
+
+    with patch("app.pipeline.candidate_search.yt_dlp.YoutubeDL") as MockYDL:
+        mock_ydl = MagicMock()
+        MockYDL.return_value.__enter__.return_value = mock_ydl
+        mock_ydl.extract_info.return_value = _FAKE_VIDEO_INFO
+
+        candidates = search_candidates(intent)
+
+    assert len(candidates) == 1
+    sole = candidates[0]
+    assert sole.url == hint_url
+    assert sole.title == "Pink Floyd - Comfortably Numb (Official Audio)"
+    assert sole.duration_seconds == 382.0
+    assert sole.channel_name == "Pink Floyd Official"
+    assert sole.view_count == 12000000
