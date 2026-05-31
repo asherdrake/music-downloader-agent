@@ -33,7 +33,9 @@ _FAKE_VIDEO_INFO = {
 
 
 def _make_plain_intent() -> DownloadIntent:
-    return DownloadIntent(target_type="Track", artist="Pink Floyd", title="Comfortably Numb")
+    return DownloadIntent(
+        target_type="Track", artist="Pink Floyd", title="Comfortably Numb"
+    )
 
 
 def _make_hint_intent(url: str) -> DownloadIntent:

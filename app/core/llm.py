@@ -23,7 +23,9 @@ def get_llm() -> BaseChatModel:
             api_key=settings.openai_api_key or None,  # type: ignore[arg-type]
         )
     # provider == "google"
-    from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore[import-not-found]
+    from langchain_google_genai import (
+        ChatGoogleGenerativeAI,  # type: ignore[import-not-found]
+    )
 
     return ChatGoogleGenerativeAI(
         model=model_name or "gemini-1.5-flash",
