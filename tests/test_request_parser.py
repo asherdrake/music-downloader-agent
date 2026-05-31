@@ -25,7 +25,9 @@ def test_plain_track_request() -> None:
         artist="Pink Floyd",
         title="Comfortably Numb",
     )
-    result = parse_request("Download Comfortably Numb by Pink Floyd", _mock_model(expected))
+    result = parse_request(
+        "Download Comfortably Numb by Pink Floyd", _mock_model(expected)
+    )
     assert result == expected
 
 
@@ -91,7 +93,9 @@ def test_download_endpoint_returns_serialised_intent() -> None:
     )
     app.dependency_overrides[get_llm] = lambda: _mock_model(expected)
     try:
-        response = client.post("/download", json={"request": "Download Lovesong by The Cure"})
+        response = client.post(
+            "/download", json={"request": "Download Lovesong by The Cure"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["target_type"] == "Track"
