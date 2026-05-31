@@ -8,4 +8,5 @@ class DownloadIntent(BaseModel):
     artist: str
     title: str
     resource_hint: str | None = None
+    edition: str | None = None
     playlist_actions: list[str] = Field(default_factory=list)

@@ -11,6 +11,7 @@ Rules:
 - artist: the performing artist name
 - title: the track or album title
 - resource_hint: any URL in the request (YouTube, SoundCloud, Bandcamp, etc.), or null if none present
+- edition: a specific release edition mentioned by the user (e.g. "2011 remaster", "deluxe edition"); null if none mentioned
 - playlist_actions: Spotify playlist names the user wants the download added to (empty list if none mentioned)\
 """
 
