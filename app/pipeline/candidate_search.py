@@ -13,8 +13,8 @@ _SEARCH_OPTS: dict[str, Any] = {
 }
 
 _URL_OPTS: dict[str, Any] = {
-    "quiet": True,
-    "no_warnings": True,
+    "quiet": False,
+    "no_warnings": False,
     "skip_download": True,
 }
 
@@ -30,8 +30,8 @@ def _build_candidate_from_entry(entry: dict[str, Any]) -> Candidate:
     )
 
 
-def _fetch_candidate_for_url(url: str) -> Candidate:
-    with yt_dlp.YoutubeDL(_URL_OPTS) as ydl:
+def _fetch_candidate_for_url(url: str, target_type: str) -> Candidate:
+    with yt_dlp.YoutubeDL(_url_opts_for_target_type(target_type)) as ydl:
         info: dict[str, Any] = ydl.extract_info(url, download=False)
     return Candidate(
         url=url,
@@ -42,9 +42,16 @@ def _fetch_candidate_for_url(url: str) -> Candidate:
     )
 
 
+def _url_opts_for_target_type(target_type: str) -> dict[str, Any]:
+    opts = dict(_URL_OPTS)
+    if target_type == "Track":
+        opts["noplaylist"] = True
+    return opts
+
+
 def search_candidates(intent: DownloadIntent, max_results: int = 10) -> list[Candidate]:
     if intent.resource_hint is not None:
-        return [_fetch_candidate_for_url(intent.resource_hint)]
+        return [_fetch_candidate_for_url(intent.resource_hint, intent.target_type)]
 
     query = f"{intent.artist} {intent.title}"
     with yt_dlp.YoutubeDL(_SEARCH_OPTS) as ydl:
