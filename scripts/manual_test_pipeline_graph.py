@@ -2,6 +2,7 @@ import sys
 from typing import Any
 
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -129,3 +130,6 @@ with SqliteSaver.from_conn_string(":memory:") as checkpointer:
     graph: CompiledStateGraph = create_graph(get_llm(), get_settings(), checkpointer)
     candidate_review_state: PipelineState = graph.invoke(_INITIAL_STATE, _CONFIG)
     print_pipeline_state(candidate_review_state)
+    selected_url = candidate_review_state["__interrupt__"][0].value["candidates"][0].url
+    result: PipelineState = graph.invoke(Command(resume=selected_url), _CONFIG)
+    print_pipeline_state(result)
