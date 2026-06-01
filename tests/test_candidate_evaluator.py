@@ -10,7 +10,7 @@ from app.pipeline.candidate_evaluator import evaluate_candidates
 _OFFICIAL_TRACK_CANDIDATE = Candidate(
     url="https://www.youtube.com/watch?v=abc001",
     title="Pink Floyd - Comfortably Numb",
-    duration_seconds=382.0,
+    duration_seconds=280.0,
     channel_name="Pink Floyd Official",
     view_count=50_000_000,
 )

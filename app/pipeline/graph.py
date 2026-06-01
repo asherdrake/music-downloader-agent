@@ -41,7 +41,6 @@ def create_graph(
         scored = evaluate_candidates(
             state.get("candidates", []),
             state["download_intent"],
-            settings.confidence_threshold,
         )
         print(scored)
         return {"scored_candidates": scored}
