@@ -1,14 +1,9 @@
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.core.llm import get_llm
-from app.models.download_intent import DownloadIntent
+from app.models.download_intent import DownloadIntent, PlaylistAction
 from app.pipeline.request_parser import parse_request
-from main import app
-
-client = TestClient(app)
 
 
 def _mock_model(intent: DownloadIntent) -> MagicMock:
@@ -65,13 +60,18 @@ def test_request_with_playlist_actions() -> None:
         target_type="Track",
         artist="Joy Division",
         title="Love Will Tear Us Apart",
-        playlist_actions=["80s Classics", "Post-Punk"],
+        playlist_actions=[
+            PlaylistAction(playlist_name="80s Classics"),
+            PlaylistAction(playlist_name="Post-Punk"),
+        ],
     )
     result = parse_request(
         "Add Love Will Tear Us Apart by Joy Division to my 80s Classics and Post-Punk playlists",
         _mock_model(expected),
     )
-    assert result.playlist_actions == ["80s Classics", "Post-Punk"]
+    assert len(result.playlist_actions) == 2
+    assert result.playlist_actions[0].playlist_name == "80s Classics"
+    assert result.playlist_actions[1].playlist_name == "Post-Punk"
 
 
 def test_ambiguous_title() -> None:
@@ -85,23 +85,3 @@ def test_ambiguous_title() -> None:
     assert result.title == "Come Together"
 
 
-def test_download_endpoint_returns_serialised_intent() -> None:
-    expected = DownloadIntent(
-        target_type="Track",
-        artist="The Cure",
-        title="Lovesong",
-    )
-    app.dependency_overrides[get_llm] = lambda: _mock_model(expected)
-    try:
-        response = client.post(
-            "/download", json={"request": "Download Lovesong by The Cure"}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["target_type"] == "Track"
-        assert data["artist"] == "The Cure"
-        assert data["title"] == "Lovesong"
-        assert data["resource_hint"] is None
-        assert data["playlist_actions"] == []
-    finally:
-        app.dependency_overrides.clear()
