@@ -43,10 +43,13 @@ def create_graph(
             state["download_intent"],
             settings.confidence_threshold,
         )
+        print(scored)
         return {"scored_candidates": scored}
 
     def candidate_review_node(state: PipelineState) -> dict:
-        selected_url: str = interrupt({"candidates": state.get("scored_candidates", [])})
+        selected_url: str = interrupt(
+            {"candidates": state.get("scored_candidates", [])}
+        )
         return {"selected_candidate_url": selected_url}
 
     builder: StateGraph = StateGraph(PipelineState)

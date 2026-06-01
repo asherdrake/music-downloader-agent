@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.types import Command
+from langgraph.types import Command, StateSnapshot
 
 from app.core.config import Settings
 from app.models.candidate import Candidate
@@ -107,7 +107,7 @@ def test_resume_sets_selected_candidate_url(mock_parse, mock_search, mock_eval):
         config = _config("t4")
         graph.invoke(_INITIAL_STATE, config)
 
-        snapshot = graph.get_state(config)
+        snapshot: StateSnapshot = graph.get_state(config)
         assert snapshot.next == ("candidate_review",)
 
         selected_url = "https://youtube.com/watch?v=abc"

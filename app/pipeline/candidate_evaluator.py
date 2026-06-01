@@ -100,6 +100,7 @@ def evaluate_candidates(
             + _DURATION_MATCH_WEIGHT * duration_match_score
             + _SOURCE_QUALITY_WEIGHT * source_quality_score
         )
+        print(candidate.title, candidate.channel_name, ":", confidence_score)
         if confidence_score >= confidence_threshold:
             scored_candidates.append(
                 ScoredCandidate(
