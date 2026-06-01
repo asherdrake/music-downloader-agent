@@ -61,25 +61,21 @@ class DiscogsClient:
             )
             search_response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise DiscogsAPIError(
-                exc.response.status_code, str(exc)
-            ) from exc
+            raise DiscogsAPIError(exc.response.status_code, str(exc)) from exc
 
         results: list[dict[str, Any]] = search_response.json().get("results", [])
         if not results:
             raise DiscogsAPIError(404, "No results found")
 
-        best_result = min(results, key=lambda r: r.get("year") or 9999)
+        best_result = min(
+            results, key=lambda r: int(r.get("year")) if r.get("year") else 9999
+        )
 
         try:
-            release_response = self._http_client.get(
-                f"/releases/{best_result['id']}"
-            )
+            release_response = self._http_client.get(f"/releases/{best_result['id']}")
             release_response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            raise DiscogsAPIError(
-                exc.response.status_code, str(exc)
-            ) from exc
+            raise DiscogsAPIError(exc.response.status_code, str(exc)) from exc
 
         return self._map_release(release_response.json())
 
