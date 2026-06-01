@@ -81,7 +81,6 @@ def _score_source_quality(channel_name: str, artist: str) -> float:
 def evaluate_candidates(
     candidates: list[Candidate],
     intent: DownloadIntent,
-    confidence_threshold: float,
 ) -> list[ScoredCandidate]:
     scored_candidates: list[ScoredCandidate] = []
 
@@ -101,16 +100,15 @@ def evaluate_candidates(
             + _SOURCE_QUALITY_WEIGHT * source_quality_score
         )
         print(candidate.title, candidate.channel_name, ":", confidence_score)
-        if confidence_score >= confidence_threshold:
-            scored_candidates.append(
-                ScoredCandidate(
-                    **candidate.model_dump(),
-                    title_match_score=title_match_score,
-                    duration_match_score=duration_match_score,
-                    source_quality_score=source_quality_score,
-                    confidence_score=confidence_score,
-                )
+        scored_candidates.append(
+            ScoredCandidate(
+                **candidate.model_dump(),
+                title_match_score=title_match_score,
+                duration_match_score=duration_match_score,
+                source_quality_score=source_quality_score,
+                confidence_score=confidence_score,
             )
+        )
 
     scored_candidates.sort(key=lambda sc: sc.confidence_score, reverse=True)
     return scored_candidates

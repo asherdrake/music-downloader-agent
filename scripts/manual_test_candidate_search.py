@@ -1,5 +1,6 @@
 from app.pipeline.candidate_search import search_candidates
 from app.models.download_intent import DownloadIntent
+from app.models.candidate import Candidate
 
 hint_intent = DownloadIntent(
     target_type="Track",
@@ -16,6 +17,6 @@ intent = DownloadIntent(
     title="3",
 )
 
-candidates = search_candidates(intent)
+candidates: list[Candidate] = search_candidates(intent)
 for c in candidates:
     print(c)

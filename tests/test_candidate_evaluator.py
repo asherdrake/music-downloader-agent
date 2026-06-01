@@ -63,9 +63,7 @@ def _make_album_intent() -> DownloadIntent:
 
 def test_exact_title_match_scores_near_one() -> None:
     intent = _make_track_intent()
-    result = evaluate_candidates(
-        [_OFFICIAL_TRACK_CANDIDATE], intent, confidence_threshold=0.0
-    )
+    result = evaluate_candidates([_OFFICIAL_TRACK_CANDIDATE], intent)
     assert len(result) == 1
     assert result[0].title_match_score >= 0.90
 
@@ -75,7 +73,6 @@ def test_partial_title_match_scores_lower_than_exact() -> None:
     result = evaluate_candidates(
         [_OFFICIAL_TRACK_CANDIDATE, _REUPLOAD_TRACK_CANDIDATE],
         intent,
-        confidence_threshold=0.0,
     )
     assert len(result) == 2
     official_score = next(
@@ -94,9 +91,7 @@ def test_partial_title_match_scores_lower_than_exact() -> None:
 
 def test_mismatched_duration_scores_zero() -> None:
     intent = _make_track_intent()
-    result = evaluate_candidates(
-        [_ALBUM_LENGTH_CANDIDATE], intent, confidence_threshold=0.0
-    )
+    result = evaluate_candidates([_ALBUM_LENGTH_CANDIDATE], intent)
     assert len(result) == 1
     assert result[0].duration_match_score == 0.0
 
@@ -111,7 +106,6 @@ def test_official_channel_scores_higher_than_reupload() -> None:
     result = evaluate_candidates(
         [_OFFICIAL_TRACK_CANDIDATE, _REUPLOAD_TRACK_CANDIDATE],
         intent,
-        confidence_threshold=0.0,
     )
     official_source_score = next(
         r.source_quality_score for r in result if r.url == _OFFICIAL_TRACK_CANDIDATE.url
@@ -125,50 +119,6 @@ def test_official_channel_scores_higher_than_reupload() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Threshold filtering
-# ---------------------------------------------------------------------------
-
-
-def test_album_length_video_rejected_for_track_intent() -> None:
-    intent = _make_track_intent()
-    result = evaluate_candidates(
-        [_ALBUM_LENGTH_CANDIDATE], intent, confidence_threshold=0.7
-    )
-    assert result == []
-
-
-def test_threshold_boundary_exactly_at_score_passes() -> None:
-    intent = _make_track_intent()
-    # Use threshold=0.0 to capture the actual score, then re-run at exactly that score.
-    all_results = evaluate_candidates(
-        [_OFFICIAL_TRACK_CANDIDATE], intent, confidence_threshold=0.0
-    )
-    assert len(all_results) == 1
-    actual_score = all_results[0].confidence_score
-
-    at_threshold = evaluate_candidates(
-        [_OFFICIAL_TRACK_CANDIDATE], intent, confidence_threshold=actual_score
-    )
-    assert len(at_threshold) == 1
-
-
-def test_threshold_boundary_just_above_score_excludes() -> None:
-    intent = _make_track_intent()
-    all_results = evaluate_candidates(
-        [_OFFICIAL_TRACK_CANDIDATE], intent, confidence_threshold=0.0
-    )
-    assert len(all_results) == 1
-    actual_score = all_results[0].confidence_score
-
-    just_above = evaluate_candidates(
-        [_OFFICIAL_TRACK_CANDIDATE],
-        intent,
-        confidence_threshold=actual_score + 0.001,
-    )
-    assert just_above == []
-
-
-# ---------------------------------------------------------------------------
 # Ranking
 # ---------------------------------------------------------------------------
 
@@ -179,7 +129,6 @@ def test_candidates_sorted_descending_by_confidence() -> None:
     result = evaluate_candidates(
         [_WRONG_SONG_CANDIDATE, _OFFICIAL_TRACK_CANDIDATE],
         intent,
-        confidence_threshold=0.0,
     )
     assert len(result) == 2
     assert result[0].confidence_score >= result[1].confidence_score
@@ -193,23 +142,20 @@ def test_candidates_sorted_descending_by_confidence() -> None:
 
 def test_empty_candidates_returns_empty_list() -> None:
     intent = _make_track_intent()
-    result = evaluate_candidates([], intent, confidence_threshold=0.7)
+    result = evaluate_candidates([], intent)
     assert result == []
 
 
-def test_all_below_threshold_returns_empty_list() -> None:
+def test_low_confidence_candidate_still_returned() -> None:
     intent = _make_track_intent()
-    result = evaluate_candidates(
-        [_ALBUM_LENGTH_CANDIDATE], intent, confidence_threshold=0.7
-    )
-    assert result == []
+    result = evaluate_candidates([_ALBUM_LENGTH_CANDIDATE], intent)
+    assert len(result) == 1
+    assert result[0].confidence_score < 0.7
 
 
 def test_scored_candidate_exposes_all_component_scores() -> None:
     intent = _make_track_intent()
-    result = evaluate_candidates(
-        [_OFFICIAL_TRACK_CANDIDATE], intent, confidence_threshold=0.0
-    )
+    result = evaluate_candidates([_OFFICIAL_TRACK_CANDIDATE], intent)
     assert len(result) == 1
     scored = result[0]
     assert isinstance(scored, ScoredCandidate)
