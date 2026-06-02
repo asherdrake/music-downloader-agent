@@ -16,9 +16,21 @@ from app.models.pipeline_state import PipelineState
 from app.models.scored_candidate import ScoredCandidate
 from app.pipeline.graph import create_graph
 
+# _INITIAL_STATE: PipelineState = {
+#     "request": (
+#         "Download the album 3 by tricot, create a playlist for it, set the image "
+#         "to the album art, and add the correct tracks in the album order."
+#     ),
+#     "download_intent": None,
+#     "candidates": [],
+#     "scored_candidates": [],
+#     "search_iteration": 0,
+#     "selected_candidate_url": None,
+# }
+
 _INITIAL_STATE: PipelineState = {
     "request": (
-        "Download the album 3 by tricot, create a playlist for it, set the image "
+        "Download the album For You by tatsuro yamashita, create a playlist for it, set the image "
         "to the album art, and add the correct tracks in the album order."
     ),
     "download_intent": None,
