@@ -38,8 +38,11 @@ _SOURCE_QUALITY_WEIGHT: float = 0.20
 def _score_title_match(candidate_title: str, artist: str, track_title: str) -> float:
     if not candidate_title.strip():
         return 0.0
-    query_string = f"{artist} {track_title}"
-    raw_score: int = fuzz.token_sort_ratio(query_string, candidate_title)
+    query_string = f"{artist} {track_title}".lower()
+    candidate_lower = candidate_title.lower()
+    set_score: int = fuzz.token_set_ratio(query_string, candidate_lower)
+    sort_score: int = fuzz.token_sort_ratio(query_string, candidate_lower)
+    raw_score: float = (set_score * sort_score) ** 0.5
     return raw_score / 100.0
 
 
@@ -79,8 +82,7 @@ def _score_source_quality(channel_name: str, artist: str) -> float:
 
 
 def evaluate_candidates(
-    candidates: list[Candidate],
-    intent: DownloadIntent,
+    candidates: list[Candidate], intent: DownloadIntent, top_k: int = 5
 ) -> list[ScoredCandidate]:
     scored_candidates: list[ScoredCandidate] = []
 
@@ -94,11 +96,13 @@ def evaluate_candidates(
         source_quality_score = _score_source_quality(
             candidate.channel_name, intent.artist
         )
+
         confidence_score = (
             _TITLE_MATCH_WEIGHT * title_match_score
             + _DURATION_MATCH_WEIGHT * duration_match_score
             + _SOURCE_QUALITY_WEIGHT * source_quality_score
         )
+        print(candidate.title, candidate.channel_name, ":", confidence_score)
         scored_candidates.append(
             ScoredCandidate(
                 **candidate.model_dump(),
@@ -110,4 +114,4 @@ def evaluate_candidates(
         )
 
     scored_candidates.sort(key=lambda sc: sc.confidence_score, reverse=True)
-    return scored_candidates
+    return scored_candidates[:top_k]

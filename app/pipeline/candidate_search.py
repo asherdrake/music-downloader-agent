@@ -49,7 +49,7 @@ def _url_opts_for_target_type(target_type: str) -> dict[str, Any]:
     return opts
 
 
-def search_candidates(intent: DownloadIntent, max_results: int = 10) -> list[Candidate]:
+def search_candidates(intent: DownloadIntent, max_results: int = 15) -> list[Candidate]:
     if intent.resource_hint is not None:
         return [_fetch_candidate_for_url(intent.resource_hint, intent.target_type)]
 

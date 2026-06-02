@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     local_files_directory: Path = Path.home() / "Music" / "Local"
     local_bridge_playlist_id: str = ""
 
+    checkpoint_db_path: Path = Path.home() / ".music-downloader" / "checkpoints.db"
+
     confidence_threshold: float = 0.7
 
     @field_validator("confidence_threshold")
