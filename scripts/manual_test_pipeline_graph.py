@@ -28,9 +28,33 @@ from app.pipeline.graph import create_graph
 #     "selected_candidate_url": None,
 # }
 
+# _INITIAL_STATE: PipelineState = {
+#     "request": (
+#         "Download the album For You by tatsuro yamashita, create a playlist for it, set the image "
+#         "to the album art, and add the correct tracks in the album order."
+#     ),
+#     "download_intent": None,
+#     "candidates": [],
+#     "scored_candidates": [],
+#     "search_iteration": 0,
+#     "selected_candidate_url": None,
+# }
+
+# _INITIAL_STATE: PipelineState = {
+#     "request": (
+#         "Download the album Riff-Rain by School Food Punishment, create a playlist for it, set the image "
+#         "to the album art, and add the correct tracks in the album order."
+#     ),
+#     "download_intent": None,
+#     "candidates": [],
+#     "scored_candidates": [],
+#     "search_iteration": 0,
+#     "selected_candidate_url": None,
+# }
+
 _INITIAL_STATE: PipelineState = {
     "request": (
-        "Download the album For You by tatsuro yamashita, create a playlist for it, set the image "
+        "Download the album Ten no Mikaku by Yuu, create a playlist for it, set the image "
         "to the album art, and add the correct tracks in the album order."
     ),
     "download_intent": None,
@@ -81,6 +105,7 @@ def _print_candidate(candidate: Candidate, index: int) -> None:
     print(f"        URL:      {candidate.url}")
     print(f"        Channel:  {candidate.channel_name}")
     print(f"        Duration: {duration}  |  Views: {candidate.view_count:,}")
+    print(f"        IsPlaylist: {candidate.is_playlist}")
 
 
 def _print_scored_candidate(candidate: ScoredCandidate, index: int) -> None:
@@ -89,7 +114,8 @@ def _print_scored_candidate(candidate: ScoredCandidate, index: int) -> None:
         f"        Scores:   title={candidate.title_match_score:.2f}  "
         f"duration={candidate.duration_match_score:.2f}  "
         f"quality={candidate.source_quality_score:.2f}  "
-        f"confidence={candidate.confidence_score:.2f}"
+        f"confidence={candidate.confidence_score:.2f}   "
+        f"IsPlaylist={candidate.is_playlist}"
     )
 
 

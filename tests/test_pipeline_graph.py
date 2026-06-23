@@ -8,6 +8,7 @@ from langgraph.types import Command, StateSnapshot
 from app.core.config import Settings
 from app.models.candidate import Candidate
 from app.models.download_intent import DownloadIntent
+from app.models.download_result import DownloadResult, TrackResult
 from app.models.scored_candidate import ScoredCandidate
 from app.pipeline.graph import _MAX_SEARCH_ITERATIONS, create_graph
 
@@ -31,6 +32,21 @@ _SCORED = ScoredCandidate(
 
 _SETTINGS = Settings(confidence_threshold=0.7)
 
+_FAKE_DOWNLOAD_RESULT = DownloadResult(
+    url=_CANDIDATE.url,
+    use_m4a=False,
+    tracks=[
+        TrackResult(
+            track_number=1,
+            title="One More Time",
+            path=_SETTINGS.local_files_directory / "Daft Punk" / "One More Time" / "01 - One More Time.mp3",
+            skipped=False,
+        )
+    ],
+    downloaded_count=1,
+    skipped_count=0,
+)
+
 _INITIAL_STATE = {
     "request": "Daft Punk One More Time",
     "download_intent": None,
@@ -38,6 +54,8 @@ _INITIAL_STATE = {
     "scored_candidates": [],
     "search_iteration": 0,
     "selected_candidate_url": None,
+    "use_m4a": False,
+    "download_result": None,
 }
 
 
@@ -98,10 +116,11 @@ def test_graph_search_exhausted_after_max_iterations(
         assert mock_search.call_count == _MAX_SEARCH_ITERATIONS
 
 
+@patch("app.pipeline.graph.run_download", return_value=_FAKE_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_INTENT)
-def test_resume_sets_selected_candidate_url(mock_parse, mock_search, mock_eval):
+def test_resume_sets_selected_candidate_url(mock_parse, mock_search, mock_eval, mock_download):
     with SqliteSaver.from_conn_string(":memory:") as mem:
         graph = _make_graph(mem)
         config = _config("t4")
@@ -116,6 +135,7 @@ def test_resume_sets_selected_candidate_url(mock_parse, mock_search, mock_eval):
         snapshot = graph.get_state(config)
         assert not snapshot.next
         assert snapshot.values["selected_candidate_url"] == selected_url
+        assert snapshot.values["download_result"] == _FAKE_DOWNLOAD_RESULT
 
 
 @pytest.fixture
@@ -145,12 +165,13 @@ def test_download_endpoint_returns_candidate_review(
     assert len(data["candidates"]) == 1
 
 
+@patch("app.pipeline.graph.run_download", return_value=_FAKE_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_INTENT)
 @patch("main.get_llm", return_value=MagicMock())
 def test_resume_endpoint_completes_pipeline(
-    mock_llm, mock_parse, mock_search, mock_eval, api_client
+    mock_llm, mock_parse, mock_search, mock_eval, mock_download, api_client
 ):
     dl = api_client.post("/download", json={"request": "Daft Punk One More Time"})
     thread_id = dl.json()["thread_id"]
@@ -163,3 +184,4 @@ def test_resume_endpoint_completes_pipeline(
     data = response.json()
     assert data["status"] == "completed"
     assert data["selected_candidate_url"] == _CANDIDATE.url
+    assert "download_result" in data

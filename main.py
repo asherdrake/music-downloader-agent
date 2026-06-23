@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.core.config import Settings, get_settings
 from app.core.llm import get_llm
+from app.models.download_result import DownloadResult
 from app.models.scored_candidate import ScoredCandidate
 from app.pipeline.graph import create_graph
 
@@ -32,6 +33,7 @@ app = FastAPI(
 
 class DownloadRequest(BaseModel):
     request: str
+    use_m4a: bool = False
 
 
 class CandidateReviewResponse(BaseModel):
@@ -50,10 +52,11 @@ class ResumeRequest(BaseModel):
     selected_candidate_url: str
 
 
-class ResumeCompleteResponse(BaseModel):
+class DownloadCompleteResponse(BaseModel):
     status: Literal["completed"]
     thread_id: str
     selected_candidate_url: str
+    download_result: DownloadResult
 
 
 @app.get("/health")
@@ -79,6 +82,8 @@ def download(
             "scored_candidates": [],
             "search_iteration": 0,
             "selected_candidate_url": None,
+            "use_m4a": body.use_m4a,
+            "download_result": None,
         },
         config,
     )
@@ -99,7 +104,7 @@ def resume(
     request: Request,
     model: Annotated[BaseChatModel, Depends(get_llm)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> ResumeCompleteResponse | CandidateReviewResponse | SearchExhaustedResponse:
+) -> DownloadCompleteResponse | CandidateReviewResponse | SearchExhaustedResponse:
     config = {"configurable": {"thread_id": body.thread_id}}
     graph = create_graph(model, settings, request.app.state.checkpointer)
     snapshot = graph.get_state(config)
@@ -115,8 +120,9 @@ def resume(
             candidates=interrupt_value["candidates"],
         )
     final_state = snapshot.values
-    return ResumeCompleteResponse(
+    return DownloadCompleteResponse(
         status="completed",
         thread_id=body.thread_id,
         selected_candidate_url=final_state.get("selected_candidate_url", ""),
+        download_result=final_state["download_result"],
     )

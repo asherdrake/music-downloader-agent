@@ -113,5 +113,10 @@ def evaluate_candidates(
             )
         )
 
-    scored_candidates.sort(key=lambda sc: sc.confidence_score, reverse=True)
-    return scored_candidates[:top_k]
+    playlist_scored = [sc for sc in scored_candidates if sc.is_playlist]
+    video_scored = [sc for sc in scored_candidates if not sc.is_playlist]
+
+    playlist_scored.sort(key=lambda sc: sc.confidence_score, reverse=True)
+    video_scored.sort(key=lambda sc: sc.confidence_score, reverse=True)
+
+    return playlist_scored + video_scored[:top_k]
