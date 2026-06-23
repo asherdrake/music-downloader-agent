@@ -12,6 +12,8 @@ Rules:
 - title: the track or album title
 - resource_hint: any URL in the request (YouTube, SoundCloud, Bandcamp, etc.), or null if none present
 - edition: a specific release edition mentioned by the user (e.g. "2011 remaster", "deluxe edition"); null if none mentioned
+- artist_native_variants: if the artist's name is originally written in a non-Latin script (Japanese, Korean, Chinese, Cyrillic, etc.) but the user gave a romanized/English form, list the native-script spellings to try. For Japanese, include every plausible form — kanji, hiragana, AND katakana — since catalogues differ on which they use. Empty list if the name is natively Latin or you are unsure.
+- title_native_variants: same as artist_native_variants, but for the track or album title.
 - playlist_actions: list of Spotify playlist actions the user wants applied (empty list if none mentioned).
   Each action has:
   - playlist_name: name of the target playlist

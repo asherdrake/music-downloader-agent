@@ -140,6 +140,27 @@ def test_candidates_sorted_descending_by_confidence() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_romaji_intent_matches_japanese_title_candidate() -> None:
+    # Candidate title is in Japanese; the romaji intent should still score it
+    # well thanks to romanization, and far better than a raw-string compare.
+    japanese_candidate = Candidate(
+        url="https://www.youtube.com/watch?v=jp001",
+        title="天の味覚",
+        duration_seconds=2999.0,
+        channel_name="turdl3",
+        view_count=1000,
+    )
+    intent = DownloadIntent(
+        target_type="Album",
+        artist="Yuu",
+        title="Ten no Mikaku",
+    )
+
+    result = evaluate_candidates([japanese_candidate], intent)
+
+    assert result[0].title_match_score >= 0.6
+
+
 def test_empty_candidates_returns_empty_list() -> None:
     intent = _make_track_intent()
     result = evaluate_candidates([], intent)

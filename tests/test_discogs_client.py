@@ -4,7 +4,15 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from app.clients.discogs import DiscogsAPIError, DiscogsClient, _parse_duration
+from app.clients.discogs import (
+    _MAX_SEARCH_ATTEMPTS,
+    DiscogsAPIError,
+    DiscogsClient,
+    _build_search_attempts,
+    _parse_duration,
+    _romanized_match_score,
+    _select_best_result,
+)
 from app.models.download_intent import DownloadIntent
 from app.models.release import Release
 
@@ -260,6 +268,154 @@ def test_parse_duration_malformed_returns_none() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Native-script variant search
+# ---------------------------------------------------------------------------
+
+_FAKE_NATIVE_RESULTS: dict[str, Any] = {
+    "results": [{"id": 555, "year": 2008, "title": "ゆう - てんのみかく"}]
+}
+
+# Earliest-year result is a bad match; the later-year result romanizes to the
+# romaji request, so fuzzy ranking must beat pure earliest-year selection.
+_FAKE_JAPANESE_MIXED_RESULTS: dict[str, Any] = {
+    "results": [
+        {"id": 1, "year": 1995, "title": "Shoko Asahara - Greatest Hits"},
+        {"id": 2, "year": 2008, "title": "ゆう - 天の味覚"},
+    ]
+}
+
+
+def test_fetch_release_falls_back_to_native_variant_search() -> None:
+    client = _make_client()
+    client._http_client = MagicMock()
+    client._http_client.get.side_effect = [
+        _make_mock_response(_FAKE_SEARCH_EMPTY),  # romaji attempt: no hits
+        _make_mock_response(_FAKE_NATIVE_RESULTS),  # native attempt: hit
+        _make_mock_response(_FAKE_RELEASE_DETAIL),  # release detail
+    ]
+
+    client.fetch_release(
+        artist="Yuu",
+        title="Ten no Mikaku",
+        artist_native_variants=["ゆう"],
+        title_native_variants=["てんのみかく"],
+    )
+
+    second_search_params = client._http_client.get.call_args_list[1][1]["params"]
+    assert second_search_params["release_title"] == "てんのみかく"
+    assert second_search_params["artist"] == "ゆう"
+    detail_call_args = client._http_client.get.call_args_list[2]
+    assert "/releases/555" in detail_call_args[0][0]
+
+
+def test_fetch_release_ranks_by_romanized_match_over_earliest_year() -> None:
+    client = _make_client()
+    client._http_client = MagicMock()
+    client._http_client.get.side_effect = [
+        _make_mock_response(_FAKE_JAPANESE_MIXED_RESULTS),
+        _make_mock_response(_FAKE_RELEASE_DETAIL),
+    ]
+
+    client.fetch_release(artist="Yuu", title="Ten no Mikaku")
+
+    detail_call_args = client._http_client.get.call_args_list[1]
+    assert "/releases/2" in detail_call_args[0][0]
+
+
+def test_build_search_attempts_romaji_first_and_dedupes() -> None:
+    attempts = _build_search_attempts(
+        artist="Yuu",
+        title="Ten no Mikaku",
+        edition=None,
+        artist_native_variants=["ゆう"],
+        title_native_variants=["てんのみかく"],
+    )
+
+    assert attempts[0] == {
+        "artist": "Yuu",
+        "release_title": "Ten no Mikaku",
+        "type": "release",
+    }
+    assert {
+        "artist": "ゆう",
+        "release_title": "てんのみかく",
+        "type": "release",
+    } in attempts
+    assert {"q": "てんのみかく", "type": "release"} in attempts
+    # No duplicates.
+    assert len(attempts) == len({tuple(sorted(a.items())) for a in attempts})
+
+
+def test_build_search_attempts_caps_total_attempts() -> None:
+    attempts = _build_search_attempts(
+        artist="A",
+        title="B",
+        edition=None,
+        artist_native_variants=[f"ア{i}" for i in range(20)],
+        title_native_variants=[f"タ{i}" for i in range(20)],
+    )
+    assert len(attempts) <= _MAX_SEARCH_ATTEMPTS
+
+
+def test_build_search_attempts_keeps_edition_on_first_attempt() -> None:
+    attempts = _build_search_attempts(
+        artist="Pink Floyd",
+        title="The Wall",
+        edition="2011 remaster",
+        artist_native_variants=[],
+        title_native_variants=[],
+    )
+    assert attempts == [
+        {
+            "artist": "Pink Floyd",
+            "release_title": "The Wall",
+            "type": "release",
+            "q": "2011 remaster",
+        }
+    ]
+
+
+def test_select_best_result_prefers_romanized_match() -> None:
+    best = _select_best_result(
+        _FAKE_JAPANESE_MIXED_RESULTS["results"], "yuu ten no mikaku"
+    )
+    assert best["id"] == 2
+
+
+def test_select_best_result_breaks_ties_by_earliest_year() -> None:
+    results = [
+        {"id": 10, "year": 1990, "title": "Pink Floyd - The Wall"},
+        {"id": 11, "year": 1979, "title": "Pink Floyd - The Wall"},
+    ]
+    best = _select_best_result(results, "pink floyd the wall")
+    assert best["id"] == 11
+
+
+def test_romanized_match_score_rescues_hiragana() -> None:
+    # Pure hiragana romanizes without word boundaries; compact comparison must
+    # still recognise it as the same work.
+    assert _romanized_match_score("ゆう - てんのみかく", "Yuu Ten no Mikaku") >= 70.0
+
+
+def test_romanized_match_score_low_for_unrelated_release() -> None:
+    assert _romanized_match_score("レムの撚糸", "Yuu Ten no Mikaku") < 70.0
+
+
+def test_fetch_release_rejects_below_threshold_match() -> None:
+    # A search that only returns unrelated rows must 404 (→ manual review),
+    # never silently tag the album with a wrong release.
+    junk_results = {"results": [{"id": 99, "year": 2026, "title": "レムの撚糸"}]}
+    client = _make_client()
+    client._http_client = MagicMock()
+    client._http_client.get.return_value = _make_mock_response(junk_results)
+
+    with pytest.raises(DiscogsAPIError) as exc_info:
+        client.fetch_release(artist="Yuu", title="Ten no Mikaku")
+
+    assert exc_info.value.status_code == 404
+
+
 def test_download_intent_accepts_edition_field() -> None:
     intent = DownloadIntent(
         target_type="Album",
@@ -278,3 +434,16 @@ def test_download_intent_edition_defaults_to_none() -> None:
         title="Creep",
     )
     assert intent.edition is None
+
+
+def test_download_intent_coerces_bare_string_native_variant() -> None:
+    # LLM structured output sometimes returns a string instead of a list.
+    intent = DownloadIntent(
+        target_type="Album",
+        artist="Yuu",
+        title="Ten no Mikaku",
+        title_native_variants="天の味覚",
+        artist_native_variants=None,
+    )
+    assert intent.title_native_variants == ["天の味覚"]
+    assert intent.artist_native_variants == []

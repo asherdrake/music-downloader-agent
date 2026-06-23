@@ -40,21 +40,9 @@ from app.pipeline.graph import create_graph
 #     "selected_candidate_url": None,
 # }
 
-# _INITIAL_STATE: PipelineState = {
-#     "request": (
-#         "Download the album Riff-Rain by School Food Punishment, create a playlist for it, set the image "
-#         "to the album art, and add the correct tracks in the album order."
-#     ),
-#     "download_intent": None,
-#     "candidates": [],
-#     "scored_candidates": [],
-#     "search_iteration": 0,
-#     "selected_candidate_url": None,
-# }
-
 _INITIAL_STATE: PipelineState = {
     "request": (
-        "Download the album Ten no Mikaku by Yuu, create a playlist for it, set the image "
+        "Download the album Riff-Rain by School Food Punishment, create a playlist for it, set the image "
         "to the album art, and add the correct tracks in the album order."
     ),
     "download_intent": None,
@@ -63,6 +51,18 @@ _INITIAL_STATE: PipelineState = {
     "search_iteration": 0,
     "selected_candidate_url": None,
 }
+
+# _INITIAL_STATE: PipelineState = {
+#     "request": (
+#         "Download the album Ten no Mikaku by Yuu, create a playlist for it, set the image "
+#         "to the album art, and add the correct tracks in the album order."
+#     ),
+#     "download_intent": None,
+#     "candidates": [],
+#     "scored_candidates": [],
+#     "search_iteration": 0,
+#     "selected_candidate_url": None,
+# }
 
 _CONFIG = {"configurable": {"thread_id": "t1"}}
 
