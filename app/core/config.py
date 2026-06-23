@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -27,7 +29,7 @@ class Settings(BaseSettings):
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = "http://localhost:8000/callback"
 
-    local_files_directory: Path = Path.home() / "Music" / "Local"
+    local_files_directory: Path = _PROJECT_ROOT / "music_downloads"
     local_bridge_playlist_id: str = ""
 
     checkpoint_db_path: Path = Path.home() / ".music-downloader" / "checkpoints.db"

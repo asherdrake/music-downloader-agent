@@ -7,3 +7,4 @@ class Candidate(BaseModel):
     duration_seconds: float
     channel_name: str
     view_count: int
+    is_playlist: bool = False
