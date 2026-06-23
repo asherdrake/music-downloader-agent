@@ -9,6 +9,7 @@ from app.core.config import Settings
 from app.models.candidate import Candidate
 from app.models.download_intent import DownloadIntent
 from app.models.download_result import DownloadResult, TrackResult
+from app.models.release import Release, TrackListing
 from app.models.scored_candidate import ScoredCandidate
 from app.pipeline.graph import _MAX_SEARCH_ITERATIONS, create_graph
 
@@ -39,12 +40,25 @@ _FAKE_DOWNLOAD_RESULT = DownloadResult(
         TrackResult(
             track_number=1,
             title="One More Time",
-            path=_SETTINGS.local_files_directory / "Daft Punk" / "One More Time" / "01 - One More Time.mp3",
+            path=_SETTINGS.local_files_directory
+            / "Daft Punk"
+            / "One More Time"
+            / "01 - One More Time.mp3",
             skipped=False,
         )
     ],
     downloaded_count=1,
     skipped_count=0,
+)
+
+_FAKE_RELEASE = Release(
+    discogs_id=1,
+    artist="Daft Punk",
+    album_title="Discovery",
+    year=2001,
+    genres=["Electronic"],
+    artwork_url=None,
+    tracklist=[TrackListing(position="1", title="One More Time")],
 )
 
 _INITIAL_STATE = {
@@ -116,11 +130,23 @@ def test_graph_search_exhausted_after_max_iterations(
         assert mock_search.call_count == _MAX_SEARCH_ITERATIONS
 
 
+@patch("app.pipeline.graph.inject_metadata", return_value=_FAKE_DOWNLOAD_RESULT)
+@patch("app.pipeline.graph.fetch_artwork", return_value=None)
+@patch("app.pipeline.graph.get_discogs_client")
 @patch("app.pipeline.graph.run_download", return_value=_FAKE_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_INTENT)
-def test_resume_sets_selected_candidate_url(mock_parse, mock_search, mock_eval, mock_download):
+def test_resume_sets_selected_candidate_url(
+    mock_parse,
+    mock_search,
+    mock_eval,
+    mock_download,
+    mock_discogs,
+    mock_art,
+    mock_inject,
+):
+    mock_discogs.return_value.fetch_release.return_value = _FAKE_RELEASE
     with SqliteSaver.from_conn_string(":memory:") as mem:
         graph = _make_graph(mem)
         config = _config("t4")
@@ -130,7 +156,7 @@ def test_resume_sets_selected_candidate_url(mock_parse, mock_search, mock_eval, 
         assert snapshot.next == ("candidate_review",)
 
         selected_url = "https://youtube.com/watch?v=abc"
-        result = graph.invoke(Command(resume=selected_url), config)
+        graph.invoke(Command(resume=selected_url), config)
 
         snapshot = graph.get_state(config)
         assert not snapshot.next
@@ -165,14 +191,26 @@ def test_download_endpoint_returns_candidate_review(
     assert len(data["candidates"]) == 1
 
 
+@patch("app.pipeline.graph.inject_metadata", return_value=_FAKE_DOWNLOAD_RESULT)
+@patch("app.pipeline.graph.fetch_artwork", return_value=None)
+@patch("app.pipeline.graph.get_discogs_client")
 @patch("app.pipeline.graph.run_download", return_value=_FAKE_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_INTENT)
 @patch("main.get_llm", return_value=MagicMock())
 def test_resume_endpoint_completes_pipeline(
-    mock_llm, mock_parse, mock_search, mock_eval, mock_download, api_client
+    mock_llm,
+    mock_parse,
+    mock_search,
+    mock_eval,
+    mock_download,
+    mock_discogs,
+    mock_art,
+    mock_inject,
+    api_client,
 ):
+    mock_discogs.return_value.fetch_release.return_value = _FAKE_RELEASE
     dl = api_client.post("/download", json={"request": "Daft Punk One More Time"})
     thread_id = dl.json()["thread_id"]
 

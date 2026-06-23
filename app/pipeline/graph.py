@@ -4,11 +4,14 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
+from app.clients.discogs import get_discogs_client
 from app.core.config import Settings
+from app.core.native_script import gather_native_variants
 from app.models.pipeline_state import PipelineState
 from app.pipeline.candidate_evaluator import evaluate_candidates
 from app.pipeline.candidate_search import search_candidates
 from app.pipeline.downloader import run_download
+from app.pipeline.metadata_injector import fetch_artwork, inject_metadata
 from app.pipeline.request_parser import parse_request
 
 _MAX_SEARCH_ITERATIONS: int = 3
@@ -61,12 +64,34 @@ def create_graph(
         )
         return {"download_result": result}
 
+    def inject_metadata_node(state: PipelineState) -> dict:
+        intent = state["download_intent"]
+        candidates = state.get("candidates") or state.get("scored_candidates") or []
+        candidate_titles = [candidate.title for candidate in candidates]
+        release = discogs_client.fetch_release(
+            artist=intent.artist,
+            title=intent.title,
+            edition=intent.edition,
+            artist_native_variants=gather_native_variants(
+                intent.artist, candidate_titles, intent.artist_native_variants
+            ),
+            title_native_variants=gather_native_variants(
+                intent.title, candidate_titles, intent.title_native_variants
+            ),
+        )
+        artwork_bytes = fetch_artwork(release.artwork_url)
+        result = inject_metadata(state["download_result"], release, artwork_bytes)
+        return {"download_result": result, "release": release}
+
+    discogs_client = get_discogs_client()
+
     builder: StateGraph = StateGraph(PipelineState)
     builder.add_node("parse_request", parse_request_node)
     builder.add_node("search_candidates", search_candidates_node)
     builder.add_node("evaluate_candidates", evaluate_candidates_node)
     builder.add_node("candidate_review", candidate_review_node)
     builder.add_node("download", download_node)
+    builder.add_node("inject_metadata", inject_metadata_node)
 
     builder.set_entry_point("parse_request")
     builder.add_edge("parse_request", "search_candidates")
@@ -81,6 +106,7 @@ def create_graph(
         },
     )
     builder.add_edge("candidate_review", "download")
-    builder.add_edge("download", END)
+    builder.add_edge("download", "inject_metadata")
+    builder.add_edge("inject_metadata", END)
 
     return builder.compile(checkpointer=checkpointer)

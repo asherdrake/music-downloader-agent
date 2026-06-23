@@ -2,6 +2,7 @@ from typing import Literal
 
 from rapidfuzz import fuzz
 
+from app.core.romanize import romanize
 from app.models.candidate import Candidate
 from app.models.download_intent import DownloadIntent
 from app.models.scored_candidate import ScoredCandidate
@@ -35,15 +36,28 @@ _DURATION_MATCH_WEIGHT: float = 0.35
 _SOURCE_QUALITY_WEIGHT: float = 0.20
 
 
+def _fuzzy_title_score(query_string: str, candidate_string: str) -> float:
+    set_score: int = fuzz.token_set_ratio(query_string, candidate_string)
+    sort_score: int = fuzz.token_sort_ratio(query_string, candidate_string)
+    raw_score: float = (set_score * sort_score) ** 0.5
+    return raw_score / 100.0
+
+
 def _score_title_match(candidate_title: str, artist: str, track_title: str) -> float:
     if not candidate_title.strip():
         return 0.0
     query_string = f"{artist} {track_title}".lower()
-    candidate_lower = candidate_title.lower()
-    set_score: int = fuzz.token_set_ratio(query_string, candidate_lower)
-    sort_score: int = fuzz.token_sort_ratio(query_string, candidate_lower)
-    raw_score: float = (set_score * sort_score) ** 0.5
-    return raw_score / 100.0
+
+    # Score the raw title and a romanized form, taking the best. This lets a
+    # romanized request match a Japanese-script candidate (e.g. "ゆう てんの
+    # みかく") without penalising Latin-script titles, which romanize to
+    # themselves.
+    candidate_forms = {candidate_title.lower()}
+    romanized = romanize(candidate_title).lower()
+    if romanized:
+        candidate_forms.add(romanized)
+
+    return max(_fuzzy_title_score(query_string, form) for form in candidate_forms)
 
 
 def _score_duration_match(
