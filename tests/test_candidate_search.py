@@ -69,6 +69,25 @@ def test_search_returns_candidates_for_plain_intent() -> None:
     assert "ytsearch" in call_args[0][0]
 
 
+def test_edition_is_appended_to_search_query() -> None:
+    intent = DownloadIntent(
+        target_type="Track",
+        artist="tricot",
+        title="The Danger of Not Mixing",
+        edition="Zepp DiverCity live version",
+    )
+    with patch("app.pipeline.candidate_search.yt_dlp.YoutubeDL") as MockYDL:
+        mock_ydl = MagicMock()
+        MockYDL.return_value.__enter__.return_value = mock_ydl
+        mock_ydl.extract_info.return_value = {"entries": []}
+
+        search_candidates(intent)
+
+    query = mock_ydl.extract_info.call_args[0][0]
+    assert "ytsearch" in query
+    assert "tricot The Danger of Not Mixing Zepp DiverCity live version" in query
+
+
 def test_resource_hint_bypasses_search() -> None:
     hint_url = "https://www.youtube.com/watch?v=xyz789"
     intent = _make_hint_intent(hint_url)

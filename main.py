@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.core.config import Settings, get_settings
 from app.core.llm import get_llm
 from app.models.download_result import DownloadResult
+from app.models.release import Release
 from app.models.scored_candidate import ScoredCandidate
 from app.pipeline.graph import create_graph
 
@@ -57,6 +58,7 @@ class DownloadCompleteResponse(BaseModel):
     thread_id: str
     selected_candidate_url: str
     download_result: DownloadResult
+    release: Release | None = None
 
 
 @app.get("/health")
@@ -109,7 +111,9 @@ def resume(
     graph = create_graph(model, settings, request.app.state.checkpointer)
     snapshot = graph.get_state(config)
     if not snapshot.next:
-        raise HTTPException(status_code=404, detail="Thread not found or already completed")
+        raise HTTPException(
+            status_code=404, detail="Thread not found or already completed"
+        )
     graph.invoke(Command(resume=body.selected_candidate_url), config)
     snapshot = graph.get_state(config)
     if snapshot.next:
@@ -125,4 +129,5 @@ def resume(
         thread_id=body.thread_id,
         selected_candidate_url=final_state.get("selected_candidate_url", ""),
         download_result=final_state["download_result"],
+        release=final_state.get("release"),
     )

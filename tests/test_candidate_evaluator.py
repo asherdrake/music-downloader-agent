@@ -84,6 +84,46 @@ def test_partial_title_match_scores_lower_than_exact() -> None:
     assert official_score > reupload_score
 
 
+def test_edition_terms_boost_matching_candidate() -> None:
+    intent = DownloadIntent(
+        target_type="Track",
+        artist="tricot",
+        title="The Danger of Not Mixing",
+        edition="Zepp DiverCity live",
+    )
+    studio = Candidate(
+        url="https://www.youtube.com/watch?v=studio",
+        title="tricot - The Danger of Not Mixing",
+        duration_seconds=200.0,
+        channel_name="tricot Official",
+        view_count=1_000_000,
+    )
+    live = Candidate(
+        url="https://www.youtube.com/watch?v=live",
+        title="tricot - The Danger of Not Mixing (Live at Zepp DiverCity)",
+        duration_seconds=200.0,
+        channel_name="tricot Official",
+        view_count=500_000,
+    )
+    result = evaluate_candidates([studio, live], intent)
+    studio_score = next(r.title_match_score for r in result if r.url == studio.url)
+    live_score = next(r.title_match_score for r in result if r.url == live.url)
+    assert live_score > studio_score
+
+
+def test_no_edition_leaves_title_score_unchanged() -> None:
+    plain_intent = _make_track_intent()
+    edition_intent = DownloadIntent(
+        target_type="Track",
+        artist="Pink Floyd",
+        title="Comfortably Numb",
+        edition=None,
+    )
+    plain = evaluate_candidates([_OFFICIAL_TRACK_CANDIDATE], plain_intent)[0]
+    with_none = evaluate_candidates([_OFFICIAL_TRACK_CANDIDATE], edition_intent)[0]
+    assert plain.title_match_score == with_none.title_match_score
+
+
 # ---------------------------------------------------------------------------
 # Duration match signal
 # ---------------------------------------------------------------------------

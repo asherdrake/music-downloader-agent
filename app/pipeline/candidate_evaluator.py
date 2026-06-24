@@ -43,10 +43,18 @@ def _fuzzy_title_score(query_string: str, candidate_string: str) -> float:
     return raw_score / 100.0
 
 
-def _score_title_match(candidate_title: str, artist: str, track_title: str) -> float:
+def _score_title_match(
+    candidate_title: str,
+    artist: str,
+    track_title: str,
+    edition: str | None = None,
+) -> float:
     if not candidate_title.strip():
         return 0.0
-    query_string = f"{artist} {track_title}".lower()
+    query_parts = [artist, track_title]
+    if edition:
+        query_parts.append(edition)
+    query_string = " ".join(query_parts).lower()
 
     # Score the raw title and a romanized form, taking the best. This lets a
     # romanized request match a Japanese-script candidate (e.g. "ゆう てんの
@@ -102,7 +110,7 @@ def evaluate_candidates(
 
     for candidate in candidates:
         title_match_score = _score_title_match(
-            candidate.title, intent.artist, intent.title
+            candidate.title, intent.artist, intent.title, intent.edition
         )
         duration_match_score = _score_duration_match(
             candidate.duration_seconds, intent.target_type
