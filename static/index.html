@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Music Downloader</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #171a21;
+        --line: #262b36;
+        --text: #e6e9ef;
+        --muted: #98a2b3;
+        --accent: #4f8cff;
+        --agent: #1d2430;
+        --user: #243044;
+        --warn: #3a2a12;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+      }
+      #app {
+        width: min(760px, 100%);
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+        font-weight: 600;
+      }
+      header small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+      #transcript {
+        flex: 1;
+        overflow-y: auto;
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .msg { padding: 10px 14px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; }
+      .msg.user { background: var(--user); align-self: flex-end; }
+      .msg.agent { background: var(--agent); align-self: flex-start; }
+      .msg.status { color: var(--muted); font-size: 13px; align-self: flex-start; padding: 2px 14px; }
+      .msg.warn { background: var(--warn); align-self: flex-start; }
+      .candidates { display: flex; flex-direction: column; gap: 8px; align-self: flex-start; max-width: 95%; }
+      .candidate {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 10px;
+        padding: 10px 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      .candidate .meta { color: var(--muted); font-size: 13px; }
+      .candidate .title { font-weight: 600; }
+      button {
+        background: var(--accent);
+        color: white;
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font: inherit;
+        white-space: nowrap;
+      }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      form { display: flex; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--line); }
+      input[type="text"] {
+        flex: 1;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 10px 12px;
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <script type="module">
+      import { h, render } from "https://esm.sh/preact@10.23.2";
+      import { useState, useRef, useCallback } from "https://esm.sh/preact@10.23.2/hooks";
+      import htm from "https://esm.sh/htm@3.1.1";
+
+      const html = htm.bind(h);
+
+      // Human-friendly labels for the pipeline's node-level status events.
+      const NODE_LABELS = {
+        parse_request: "Parsing your request…",
+        search_candidates: "Searching for candidates…",
+        evaluate_candidates: "Evaluating candidates…",
+        candidate_review: "Selection received…",
+        download: "Downloading audio…",
+        inject_metadata: "Injecting metadata from Discogs…",
+      };
+
+      const fmtDuration = (s) => {
+        s = Math.round(s || 0);
+        const m = Math.floor(s / 60);
+        return `${m}:${String(s % 60).padStart(2, "0")}`;
+      };
+
+      // Minimal SSE reader over a fetch() ReadableStream. Yields parsed event
+      // objects ({type, ...}) as "data:" frames arrive (frames split by \n\n).
+      async function* readSSE(response) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sep;
+          while ((sep = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            const line = frame.split("\n").find((l) => l.startsWith("data:"));
+            if (line) yield JSON.parse(line.slice(5).trim());
+          }
+        }
+      }
+
+      function App() {
+        const [messages, setMessages] = useState([]);
+        const [input, setInput] = useState("");
+        const [busy, setBusy] = useState(false);
+        const transcriptRef = useRef(null);
+
+        const push = useCallback((msg) => {
+          setMessages((prev) => [...prev, msg]);
+          queueMicrotask(() => {
+            const el = transcriptRef.current;
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        }, []);
+
+        // Drive one SSE stream (start or resume) and route each event to the UI.
+        async function consume(response) {
+          for await (const event of readSSE(response)) {
+            if (event.type === "status") {
+              push({ kind: "status", text: NODE_LABELS[event.node] || event.node });
+            } else if (event.type === "interrupt") {
+              if (event.interrupt_type === "candidate_review") {
+                push({
+                  kind: "candidates",
+                  thread_id: event.payload.thread_id,
+                  candidates: event.payload.candidates || [],
+                });
+              } else {
+                push({
+                  kind: "warn",
+                  text: `The "${event.interrupt_type}" step isn't supported in this UI yet.`,
+                });
+              }
+            } else if (event.type === "done") {
+              const dr = event.payload.download_result;
+              const rel = event.payload.release;
+              let text = "Done.";
+              if (dr) {
+                text = `Done — ${dr.downloaded_count} downloaded, ${dr.skipped_count} skipped.`;
+                if (rel) text += `\n${rel.album_title} (${rel.year}) by ${rel.artist}.`;
+              }
+              push({ kind: "agent", text });
+            }
+          }
+        }
+
+        async function startRun(request) {
+          setBusy(true);
+          try {
+            const response = await fetch("/download/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ request }),
+            });
+            await consume(response);
+          } catch (err) {
+            push({ kind: "warn", text: `Stream error: ${err.message}` });
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        async function selectCandidate(threadId, url) {
+          setBusy(true);
+          push({ kind: "status", text: "Resuming…" });
+          try {
+            const response = await fetch("/resume/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ thread_id: threadId, selected_candidate_url: url }),
+            });
+            await consume(response);
+          } catch (err) {
+            push({ kind: "warn", text: `Stream error: ${err.message}` });
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        function onSubmit(e) {
+          e.preventDefault();
+          const request = input.trim();
+          if (!request || busy) return;
+          push({ kind: "user", text: request });
+          setInput("");
+          startRun(request);
+        }
+
+        const renderMessage = (msg, i) => {
+          if (msg.kind === "candidates") {
+            return html`
+              <div class="candidates" key=${i}>
+                ${msg.candidates.map(
+                  (c, j) => html`
+                    <div class="candidate" key=${j}>
+                      <div>
+                        <div class="title">${c.title}</div>
+                        <div class="meta">
+                          ${c.channel_name} · ${fmtDuration(c.duration_seconds)}
+                          · ${c.is_playlist ? "playlist" : "video"}
+                          · confidence ${(c.confidence_score ?? 0).toFixed(2)}
+                        </div>
+                      </div>
+                      <button
+                        disabled=${busy}
+                        onClick=${() => selectCandidate(msg.thread_id, c.url)}
+                      >
+                        Select
+                      </button>
+                    </div>
+                  `
+                )}
+              </div>
+            `;
+          }
+          const cls =
+            msg.kind === "user"
+              ? "msg user"
+              : msg.kind === "status"
+              ? "msg status"
+              : msg.kind === "warn"
+              ? "msg warn"
+              : "msg agent";
+          return html`<div class=${cls} key=${i}>${msg.text}</div>`;
+        };
+
+        return html`
+          <div id="app">
+            <header>Music Downloader <small>chat (tracer bullet)</small></header>
+            <div id="transcript" ref=${transcriptRef}>
+              ${messages.length === 0
+                ? html`<div class="msg agent">
+                    Type a music request, e.g. <em>Daft Punk — One More Time</em>.
+                  </div>`
+                : messages.map(renderMessage)}
+            </div>
+            <form onSubmit=${onSubmit}>
+              <input
+                type="text"
+                placeholder="Artist — Title (or an album)"
+                value=${input}
+                disabled=${busy}
+                onInput=${(e) => setInput(e.target.value)}
+              />
+              <button type="submit" disabled=${busy}>Send</button>
+            </form>
+          </div>
+        `;
+      }
+
+      render(html`<${App} />`, document.getElementById("app"));
+    </script>
+  </body>
+</html>
