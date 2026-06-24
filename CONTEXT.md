@@ -115,7 +115,7 @@ _Avoid_: Graph state, session, context
 ### Search & Evaluation
 
 **Candidate Search**:
-The phase that produces a ranked list of Candidates for a given Download Intent. Uses yt-dlp's native `ytsearch` extractor to query YouTube directly — returns structured video metadata (title, duration, channel) without a separate search API.
+The phase that produces a ranked list of Candidates for a given Download Intent. Uses yt-dlp's native `ytsearch` extractor to query YouTube directly — returns structured video metadata (title, duration, channel, thumbnail) without a separate search API. May be re-run when the user requests a re-search at Candidate Review, optionally with a refined query.
 _Avoid_: Search phase, YouTube search, video search
 
 **Timestamp Search**:
@@ -135,5 +135,5 @@ The minimum Confidence Score a Candidate must reach to be considered viable. Set
 _Avoid_: Score cutoff, minimum score
 
 **Candidate Review**:
-The step after evaluation where all viable Candidates (those at or above the Confidence Threshold) are surfaced to the user via an API response. The pipeline pauses until the caller POSTs back a selection. This decouples the confirmation interaction from the core pipeline, allowing any frontend (CLI, web UI, etc.) to drive it.
+The step after evaluation where all viable Candidates (those at or above the Confidence Threshold) are surfaced to the user via an API response. The pipeline pauses until the caller POSTs back one of two responses: a **selection** (the chosen Candidate's URL, routing forward to download) or a **re-search** request (optionally carrying a refined query, routing back to Candidate Search). This decouples the confirmation interaction from the core pipeline, allowing any frontend (CLI, web UI, etc.) to drive it.
 _Avoid_: Source confirmation, result preview, user approval
