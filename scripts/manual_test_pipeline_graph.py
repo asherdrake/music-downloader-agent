@@ -40,17 +40,17 @@ from app.pipeline.graph import create_graph
 #     "selected_candidate_url": None,
 # }
 
-_INITIAL_STATE: PipelineState = {
-    "request": (
-        "Download the album Riff-Rain by School Food Punishment, create a playlist for it, set the image "
-        "to the album art, and add the correct tracks in the album order."
-    ),
-    "download_intent": None,
-    "candidates": [],
-    "scored_candidates": [],
-    "search_iteration": 0,
-    "selected_candidate_url": None,
-}
+# _INITIAL_STATE: PipelineState = {
+#     "request": (
+#         "Download the album Riff-Rain by School Food Punishment, create a playlist for it, set the image "
+#         "to the album art, and add the correct tracks in the album order."
+#     ),
+#     "download_intent": None,
+#     "candidates": [],
+#     "scored_candidates": [],
+#     "search_iteration": 0,
+#     "selected_candidate_url": None,
+# }
 
 # _INITIAL_STATE: PipelineState = {
 #     "request": (
@@ -63,6 +63,17 @@ _INITIAL_STATE: PipelineState = {
 #     "search_iteration": 0,
 #     "selected_candidate_url": None,
 # }
+
+_INITIAL_STATE: PipelineState = {
+    "request": (
+        "Download the track The Danger of Not Mixing by tricot, specifically the Zepp DiverCity live version. Add it to my local files playlist."
+    ),
+    "download_intent": None,
+    "candidates": [],
+    "scored_candidates": [],
+    "search_iteration": 0,
+    "selected_candidate_url": None,
+}
 
 _CONFIG = {"configurable": {"thread_id": "t1"}}
 

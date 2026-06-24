@@ -120,6 +120,8 @@ def search_candidates(intent: DownloadIntent, max_results: int = 15) -> list[Can
         return [_fetch_candidate_for_url(intent.resource_hint, intent.target_type)]
 
     query = f"{intent.artist} {intent.title}"
+    if intent.edition:
+        query = f"{query} {intent.edition}"
 
     with yt_dlp.YoutubeDL(_SEARCH_OPTS) as ydl:
         results: dict[str, Any] = ydl.extract_info(
