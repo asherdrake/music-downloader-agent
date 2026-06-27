@@ -14,6 +14,7 @@ from starlette.concurrency import iterate_in_threadpool
 
 from app.core.config import Settings, get_settings
 from app.core.llm import get_llm
+from app.models.download_intent import DownloadIntent
 from app.models.download_result import DownloadResult
 from app.models.release import Release
 from app.models.scored_candidate import ScoredCandidate
@@ -55,9 +56,17 @@ class SearchExhaustedResponse(BaseModel):
     thread_id: str
 
 
+class ChapterMapPromptResponse(BaseModel):
+    status: Literal["chapter_map_prompt"]
+    thread_id: str
+    download_intent: DownloadIntent
+    tracklist: list[str]
+
+
 class ResumeRequest(BaseModel):
     thread_id: str
-    selected_candidate_url: str
+    selected_candidate_url: str | None = None
+    chapter_map_file_path: str | None = None
 
 
 class DownloadCompleteResponse(BaseModel):
@@ -73,13 +82,44 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _interrupt_response(
+    snapshot, thread_id: str
+) -> CandidateReviewResponse | ChapterMapPromptResponse:
+    """Build the response for whichever interrupt the run suspended at.
+
+    The suspended node's name selects the interrupt type, mirroring how the
+    event-stream layer derives ``interrupt_type``.
+    """
+    interrupt_node = snapshot.next[0]
+    interrupt_value = snapshot.tasks[0].interrupts[0].value
+    if interrupt_node == "chapter_map_prompt":
+        return ChapterMapPromptResponse(
+            status="chapter_map_prompt",
+            thread_id=thread_id,
+            download_intent=interrupt_value["download_intent"],
+            tracklist=interrupt_value["tracklist"],
+        )
+    return CandidateReviewResponse(
+        status="candidate_review",
+        thread_id=thread_id,
+        candidates=interrupt_value["candidates"],
+    )
+
+
+def _resume_value(snapshot, body: "ResumeRequest") -> str | None:
+    """Pick the resume payload that matches the pending interrupt."""
+    if snapshot.next and snapshot.next[0] == "chapter_map_prompt":
+        return body.chapter_map_file_path
+    return body.selected_candidate_url
+
+
 @app.post("/download")
 def download(
     body: DownloadRequest,
     request: Request,
     model: Annotated[BaseChatModel, Depends(get_llm)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> CandidateReviewResponse | SearchExhaustedResponse:
+) -> CandidateReviewResponse | ChapterMapPromptResponse | SearchExhaustedResponse:
     thread_id = str(uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     graph = create_graph(model, settings, request.app.state.checkpointer)
@@ -98,12 +138,7 @@ def download(
     )
     snapshot = graph.get_state(config)
     if snapshot.next:
-        interrupt_value = snapshot.tasks[0].interrupts[0].value
-        return CandidateReviewResponse(
-            status="candidate_review",
-            thread_id=thread_id,
-            candidates=interrupt_value["candidates"],
-        )
+        return _interrupt_response(snapshot, thread_id)
     return SearchExhaustedResponse(status="search_exhausted", thread_id=thread_id)
 
 
@@ -113,7 +148,12 @@ def resume(
     request: Request,
     model: Annotated[BaseChatModel, Depends(get_llm)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> DownloadCompleteResponse | CandidateReviewResponse | SearchExhaustedResponse:
+) -> (
+    DownloadCompleteResponse
+    | CandidateReviewResponse
+    | ChapterMapPromptResponse
+    | SearchExhaustedResponse
+):
     config = {"configurable": {"thread_id": body.thread_id}}
     graph = create_graph(model, settings, request.app.state.checkpointer)
     snapshot = graph.get_state(config)
@@ -121,15 +161,10 @@ def resume(
         raise HTTPException(
             status_code=404, detail="Thread not found or already completed"
         )
-    graph.invoke(Command(resume=body.selected_candidate_url), config)
+    graph.invoke(Command(resume=_resume_value(snapshot, body)), config)
     snapshot = graph.get_state(config)
     if snapshot.next:
-        interrupt_value = snapshot.tasks[0].interrupts[0].value
-        return CandidateReviewResponse(
-            status="candidate_review",
-            thread_id=body.thread_id,
-            candidates=interrupt_value["candidates"],
-        )
+        return _interrupt_response(snapshot, body.thread_id)
     final_state = snapshot.values
     return DownloadCompleteResponse(
         status="completed",
@@ -211,7 +246,7 @@ def resume_stream(
             status_code=404, detail="Thread not found or already completed"
         )
     events = stream_pipeline_events(
-        graph, Command(resume=body.selected_candidate_url), config
+        graph, Command(resume=_resume_value(snapshot, body)), config
     )
     return _sse_response(events, body.thread_id)
 

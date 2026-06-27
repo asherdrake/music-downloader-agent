@@ -1,12 +1,15 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from app.models.chapter_map import ChapterEntry
 from app.models.release import Release, TrackListing
 from app.pipeline.timestamp_resolver import (
     _format_timestamp,
     _LLMChapterMap,
     _LLMRawChapter,
     _parse_timestamp,
+    _write_chapter_map,
+    read_chapter_map,
     resolve_timestamps,
 )
 
@@ -275,3 +278,39 @@ def test_cascade_level2_success_skips_3(MockYDL, mock_discogs_fn, tmp_path) -> N
 
     assert result.method == "llm"
     mock_discogs_fn.assert_not_called()
+
+
+# --- read_chapter_map (manual resume) -----------------------------------------
+
+
+def test_read_chapter_map_round_trips_write(tmp_path: Path) -> None:
+    chapters = [
+        ChapterEntry(start_seconds=0.0, track_name="In the Flesh?"),
+        ChapterEntry(start_seconds=201.0, track_name="The Thin Ice"),
+    ]
+    path = _write_chapter_map(chapters, tmp_path, "chapters.txt")
+
+    loaded = read_chapter_map(path)
+
+    assert loaded == chapters
+
+
+def test_read_chapter_map_skips_blank_and_junk_lines(tmp_path: Path) -> None:
+    path = tmp_path / "manual.txt"
+    path.write_text(
+        "\n".join(
+            [
+                "00:00:00 First",
+                "",
+                "   ",
+                "not-a-timestamp Second",
+                "03:21 Third",  # MM:SS also accepted
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = read_chapter_map(path)
+
+    assert [c.track_name for c in loaded] == ["First", "Third"]
+    assert loaded[1].start_seconds == 201.0
