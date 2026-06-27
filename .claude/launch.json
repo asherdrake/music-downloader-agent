@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "main:app", "--port", "8055"],
+      "port": 8055,
+      "autoPort": false
+    }
+  ]
+}

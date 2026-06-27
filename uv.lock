@@ -895,6 +895,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jaconv" },
     { name = "keyboard" },
     { name = "langchain-anthropic" },
     { name = "langchain-core" },
@@ -938,6 +939,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.13" },
+    { name = "jaconv", specifier = ">=0.5.0" },
     { name = "keyboard", specifier = ">=0.13" },
     { name = "langchain-anthropic", specifier = ">=0.2" },
     { name = "langchain-core", specifier = ">=0.3" },
