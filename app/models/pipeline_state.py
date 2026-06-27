@@ -1,6 +1,8 @@
+from pathlib import Path
 from typing import NotRequired, TypedDict
 
 from app.models.candidate import Candidate
+from app.models.chapter_map import ChapterEntry
 from app.models.download_intent import DownloadIntent
 from app.models.download_result import DownloadResult
 from app.models.release import Release
@@ -17,3 +19,7 @@ class PipelineState(TypedDict):
     use_m4a: NotRequired[bool]
     download_result: NotRequired[DownloadResult | None]
     release: NotRequired[Release | None]
+    # Compilation Source timestamp resolution (Album, single back-to-back video).
+    chapters: NotRequired[list[ChapterEntry]]
+    timestamp_method: NotRequired[str | None]
+    chapter_map_path: NotRequired[Path | None]

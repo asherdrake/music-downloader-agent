@@ -1,12 +1,13 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+from app.models.chapter_map import ChapterEntry
 from app.models.download_intent import DownloadIntent
 from app.pipeline.downloader import (
+    _album_dir,
     _expected_path,
     _sanitize,
+    download_compilation,
     download_playlist,
     download_track,
     run_download,
@@ -294,3 +295,129 @@ def test_run_download_routes_album_intent(mock_track, mock_playlist) -> None:
     run_download("https://yt.com/playlist=abc", intent, _BASE)
     mock_playlist.assert_called_once()
     mock_track.assert_not_called()
+
+
+# --- _album_dir ---
+
+
+def test_album_dir_layout() -> None:
+    assert _album_dir(_BASE, "Pink Floyd", "The Wall") == (
+        _BASE / "Pink Floyd" / "The Wall"
+    )
+
+
+def test_album_dir_sanitizes() -> None:
+    assert "AC_DC" in str(_album_dir(_BASE, "AC/DC", "Back in Black"))
+
+
+# --- download_compilation ---
+
+_COMP_CHAPTERS = [
+    ChapterEntry(start_seconds=0.0, track_name="In the Flesh?"),
+    ChapterEntry(start_seconds=201.0, track_name="The Thin Ice"),
+    ChapterEntry(start_seconds=350.0, track_name="Another Brick"),
+]
+
+
+@patch("app.pipeline.downloader.subprocess.run")
+@patch("app.pipeline.downloader.yt_dlp.YoutubeDL")
+def test_compilation_downloads_once_and_splits_each_chapter(
+    MockYDL, mock_run, tmp_path: Path
+) -> None:
+    mock_ydl = MagicMock()
+    MockYDL.return_value.__enter__.return_value = mock_ydl
+    intent = _album_intent()
+
+    result = download_compilation(
+        "https://yt.com/v=comp", intent, _COMP_CHAPTERS, tmp_path
+    )
+
+    mock_ydl.download.assert_called_once()
+    assert mock_run.call_count == 3
+    assert result.downloaded_count == 3
+    assert result.skipped_count == 0
+    album = tmp_path / "Pink Floyd" / "The Wall"
+    assert result.tracks[0].path == album / "01 - In the Flesh_.mp3"
+    assert result.tracks[2].path == album / "03 - Another Brick.mp3"
+
+
+@patch("app.pipeline.downloader.subprocess.run")
+@patch("app.pipeline.downloader.yt_dlp.YoutubeDL")
+def test_compilation_ffmpeg_args_use_chapter_boundaries(
+    MockYDL, mock_run, tmp_path: Path
+) -> None:
+    mock_ydl = MagicMock()
+    MockYDL.return_value.__enter__.return_value = mock_ydl
+
+    download_compilation(
+        "https://yt.com/v=comp", _album_intent(), _COMP_CHAPTERS, tmp_path
+    )
+
+    first_cmd = mock_run.call_args_list[0][0][0]
+    assert "-ss" in first_cmd and "0.0" in first_cmd
+    assert "-to" in first_cmd and "201.0" in first_cmd
+    # Final chapter cuts to end of file: no -to.
+    last_cmd = mock_run.call_args_list[2][0][0]
+    assert "-ss" in last_cmd and "350.0" in last_cmd
+    assert "-to" not in last_cmd
+
+
+@patch("app.pipeline.downloader.subprocess.run")
+@patch("app.pipeline.downloader.yt_dlp.YoutubeDL")
+def test_compilation_skips_existing_tracks(MockYDL, mock_run, tmp_path: Path) -> None:
+    mock_ydl = MagicMock()
+    MockYDL.return_value.__enter__.return_value = mock_ydl
+    album = tmp_path / "Pink Floyd" / "The Wall"
+    album.mkdir(parents=True)
+    for track_number, chapter in enumerate(_COMP_CHAPTERS, start=1):
+        existing = _expected_path(
+            tmp_path, "Pink Floyd", "The Wall", track_number, chapter.track_name, "mp3"
+        )
+        existing.write_bytes(b"")
+
+    result = download_compilation(
+        "https://yt.com/v=comp", _album_intent(), _COMP_CHAPTERS, tmp_path
+    )
+
+    MockYDL.assert_not_called()
+    mock_run.assert_not_called()
+    assert result.skipped_count == 3
+    assert result.downloaded_count == 0
+
+
+@patch("app.pipeline.downloader.subprocess.run")
+@patch("app.pipeline.downloader.yt_dlp.YoutubeDL")
+def test_compilation_partial_skip(MockYDL, mock_run, tmp_path: Path) -> None:
+    mock_ydl = MagicMock()
+    MockYDL.return_value.__enter__.return_value = mock_ydl
+    album = tmp_path / "Pink Floyd" / "The Wall"
+    album.mkdir(parents=True)
+    (album / "01 - In the Flesh_.mp3").write_bytes(b"")  # track 1 exists
+
+    result = download_compilation(
+        "https://yt.com/v=comp", _album_intent(), _COMP_CHAPTERS, tmp_path
+    )
+
+    assert result.skipped_count == 1
+    assert result.downloaded_count == 2
+    assert mock_run.call_count == 2
+
+
+@patch("app.pipeline.downloader.subprocess.run")
+@patch("app.pipeline.downloader.yt_dlp.YoutubeDL")
+def test_compilation_removes_intermediate_full_file(
+    MockYDL, mock_run, tmp_path: Path
+) -> None:
+    mock_ydl = MagicMock()
+    MockYDL.return_value.__enter__.return_value = mock_ydl
+    album = tmp_path / "Pink Floyd" / "The Wall"
+    # yt-dlp would write the full file; emulate so cleanup has something to remove.
+    mock_ydl.download.side_effect = lambda _urls: (
+        album / "__compilation_full.mp3"
+    ).write_bytes(b"")
+
+    download_compilation(
+        "https://yt.com/v=comp", _album_intent(), _COMP_CHAPTERS, tmp_path
+    )
+
+    assert not (album / "__compilation_full.mp3").exists()

@@ -72,7 +72,7 @@ def test_stream_reaches_candidate_review_interrupt(mock_parse, mock_search, mock
 @patch("app.pipeline.graph.inject_metadata", return_value=_FAKE_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.fetch_artwork", return_value=None)
 @patch("app.pipeline.graph.get_discogs_client")
-@patch("app.pipeline.graph.run_download", return_value=_FAKE_DOWNLOAD_RESULT)
+@patch("app.pipeline.graph.download_track", return_value=_FAKE_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_INTENT)
