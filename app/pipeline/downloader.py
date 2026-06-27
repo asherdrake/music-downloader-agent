@@ -57,7 +57,11 @@ def download_track(
         return DownloadResult(
             url=url,
             use_m4a=use_m4a,
-            tracks=[TrackResult(track_number=1, title=intent.title, path=expected, skipped=True)],
+            tracks=[
+                TrackResult(
+                    track_number=1, title=intent.title, path=expected, skipped=True
+                )
+            ],
             downloaded_count=0,
             skipped_count=1,
         )
@@ -71,7 +75,11 @@ def download_track(
     return DownloadResult(
         url=url,
         use_m4a=use_m4a,
-        tracks=[TrackResult(track_number=1, title=intent.title, path=expected, skipped=False)],
+        tracks=[
+            TrackResult(
+                track_number=1, title=intent.title, path=expected, skipped=False
+            )
+        ],
         downloaded_count=1,
         skipped_count=0,
     )
@@ -86,7 +94,12 @@ def download_playlist(
     ext = "m4a" if use_m4a else "mp3"
 
     with yt_dlp.YoutubeDL(
-        {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True}
+        {
+            "quiet": True,
+            "no_warnings": True,
+            "extract_flat": True,
+            "skip_download": True,
+        }
     ) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -99,12 +112,22 @@ def download_playlist(
         track_url = entry.get("url") or f"https://www.youtube.com/watch?v={entry['id']}"
 
         expected = _expected_path(
-            local_files_directory, intent.artist, intent.title, track_number, track_title, ext
+            local_files_directory,
+            intent.artist,
+            intent.title,
+            track_number,
+            track_title,
+            ext,
         )
 
         if expected.exists():
             tracks.append(
-                TrackResult(track_number=track_number, title=track_title, path=expected, skipped=True)
+                TrackResult(
+                    track_number=track_number,
+                    title=track_title,
+                    path=expected,
+                    skipped=True,
+                )
             )
             continue
 
@@ -115,7 +138,12 @@ def download_playlist(
             ydl.download([track_url])
 
         tracks.append(
-            TrackResult(track_number=track_number, title=track_title, path=expected, skipped=False)
+            TrackResult(
+                track_number=track_number,
+                title=track_title,
+                path=expected,
+                skipped=False,
+            )
         )
 
     skipped_count = sum(1 for t in tracks if t.skipped)

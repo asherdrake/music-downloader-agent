@@ -83,5 +83,3 @@ def test_ambiguous_title() -> None:
     result = parse_request("that Beatles song come together", _mock_model(expected))
     assert result.artist == "The Beatles"
     assert result.title == "Come Together"
-
-

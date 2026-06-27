@@ -12,6 +12,10 @@ _FAKE_ENTRIES = [
         "duration": 382,
         "channel": "Pink Floyd Official",
         "view_count": 50000000,
+        "thumbnails": [
+            {"url": "https://i.ytimg.com/vi/abc123/default.jpg"},
+            {"url": "https://i.ytimg.com/vi/abc123/hqdefault.jpg"},
+        ],
     },
     {
         "id": "def456",
@@ -29,6 +33,7 @@ _FAKE_VIDEO_INFO = {
     "duration": 382,
     "channel": "Pink Floyd Official",
     "view_count": 12000000,
+    "thumbnail": "https://i.ytimg.com/vi/xyz789/maxresdefault.jpg",
 }
 
 
@@ -64,6 +69,10 @@ def test_search_returns_candidates_for_plain_intent() -> None:
     assert first.duration_seconds == 382.0
     assert first.channel_name == "Pink Floyd Official"
     assert first.view_count == 50000000
+    # Highest-resolution thumbnail (last in the list) is selected.
+    assert first.thumbnail_url == "https://i.ytimg.com/vi/abc123/hqdefault.jpg"
+    # Entry without thumbnails degrades gracefully to None.
+    assert candidates[1].thumbnail_url is None
 
     call_args = mock_ydl.extract_info.call_args
     assert "ytsearch" in call_args[0][0]
@@ -123,6 +132,8 @@ def test_resource_hint_returns_sole_candidate() -> None:
     assert sole.duration_seconds == 382.0
     assert sole.channel_name == "Pink Floyd Official"
     assert sole.view_count == 12000000
+    # Singular `thumbnail` key from full extraction is used directly.
+    assert sole.thumbnail_url == "https://i.ytimg.com/vi/xyz789/maxresdefault.jpg"
 
 
 _PLAYLIST_URL = "https://www.youtube.com/playlist?list=PLabc123"

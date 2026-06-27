@@ -41,6 +41,16 @@ _URL_OPTS: dict[str, Any] = {
 _MIX_ID_PREFIXES: tuple[str, ...] = ("RD", "RDCLAK", "UU")
 
 
+def _extract_thumbnail_url(entry: dict[str, Any]) -> str | None:
+    thumbnail = entry.get("thumbnail")
+    if thumbnail:
+        return thumbnail
+    thumbnails = entry.get("thumbnails") or []
+    if thumbnails:
+        return thumbnails[-1].get("url")  # highest resolution
+    return None
+
+
 def _is_playlist_entry(entry: dict[str, Any]) -> bool:
     ie_key = entry.get("ie_key") or ""
     url = entry.get("url") or ""
@@ -71,6 +81,7 @@ def _build_candidate_from_entry(entry: dict[str, Any]) -> Candidate:
         channel_name=entry.get("channel") or entry.get("uploader") or "",
         view_count=int(entry.get("view_count") or 0),
         is_playlist=False,
+        thumbnail_url=_extract_thumbnail_url(entry),
     )
 
 
@@ -85,6 +96,7 @@ def _build_playlist_candidate(entry: dict[str, Any]) -> Candidate:
         channel_name=entry.get("channel") or entry.get("uploader") or "",
         view_count=int(entry.get("view_count") or 0),
         is_playlist=True,
+        thumbnail_url=_extract_thumbnail_url(entry),
     )
 
 
@@ -105,6 +117,7 @@ def _fetch_candidate_for_url(url: str, target_type: str) -> Candidate:
         duration_seconds=float(info.get("duration") or 0.0),
         channel_name=info.get("channel") or info.get("uploader") or "",
         view_count=int(info.get("view_count") or 0),
+        thumbnail_url=_extract_thumbnail_url(info),
     )
 
 
@@ -130,7 +143,9 @@ def search_candidates(intent: DownloadIntent, max_results: int = 15) -> list[Can
 
     entries: list[dict[str, Any]] = (results or {}).get("entries") or []
     candidates: list[Candidate] = [
-        _build_candidate_from_entry(e) for e in entries if e and not _is_playlist_entry(e)
+        _build_candidate_from_entry(e)
+        for e in entries
+        if e and not _is_playlist_entry(e)
     ]
 
     if intent.target_type == "Album":

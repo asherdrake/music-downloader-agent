@@ -8,3 +8,4 @@ class Candidate(BaseModel):
     channel_name: str
     view_count: int
     is_playlist: bool = False
+    thumbnail_url: str | None = None
