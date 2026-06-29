@@ -14,7 +14,6 @@ from starlette.concurrency import iterate_in_threadpool
 
 from app.core.config import Settings, get_settings
 from app.core.llm import get_llm
-from app.models.download_intent import DownloadIntent
 from app.models.download_result import DownloadResult
 from app.models.release import Release
 from app.models.scored_candidate import ScoredCandidate
@@ -56,17 +55,22 @@ class SearchExhaustedResponse(BaseModel):
     thread_id: str
 
 
-class ChapterMapPromptResponse(BaseModel):
-    status: Literal["chapter_map_prompt"]
+class ChapterMapRow(BaseModel):
+    start_time: str
+    track_name: str
+
+
+class ChapterMapReviewResponse(BaseModel):
+    status: Literal["chapter_map_review"]
     thread_id: str
-    download_intent: DownloadIntent
-    tracklist: list[str]
+    rows: list[ChapterMapRow]
+    method: str | None = None
 
 
 class ResumeRequest(BaseModel):
     thread_id: str
     selected_candidate_url: str | None = None
-    chapter_map_file_path: str | None = None
+    chapter_map: list[ChapterMapRow] | None = None
 
 
 class DownloadCompleteResponse(BaseModel):
@@ -84,7 +88,7 @@ def health_check() -> dict[str, str]:
 
 def _interrupt_response(
     snapshot, thread_id: str
-) -> CandidateReviewResponse | ChapterMapPromptResponse:
+) -> CandidateReviewResponse | ChapterMapReviewResponse:
     """Build the response for whichever interrupt the run suspended at.
 
     The suspended node's name selects the interrupt type, mirroring how the
@@ -92,12 +96,12 @@ def _interrupt_response(
     """
     interrupt_node = snapshot.next[0]
     interrupt_value = snapshot.tasks[0].interrupts[0].value
-    if interrupt_node == "chapter_map_prompt":
-        return ChapterMapPromptResponse(
-            status="chapter_map_prompt",
+    if interrupt_node == "chapter_map_review":
+        return ChapterMapReviewResponse(
+            status="chapter_map_review",
             thread_id=thread_id,
-            download_intent=interrupt_value["download_intent"],
-            tracklist=interrupt_value["tracklist"],
+            rows=interrupt_value["rows"],
+            method=interrupt_value.get("method"),
         )
     return CandidateReviewResponse(
         status="candidate_review",
@@ -106,10 +110,10 @@ def _interrupt_response(
     )
 
 
-def _resume_value(snapshot, body: "ResumeRequest") -> str | None:
+def _resume_value(snapshot, body: "ResumeRequest"):
     """Pick the resume payload that matches the pending interrupt."""
-    if snapshot.next and snapshot.next[0] == "chapter_map_prompt":
-        return body.chapter_map_file_path
+    if snapshot.next and snapshot.next[0] == "chapter_map_review":
+        return [row.model_dump() for row in (body.chapter_map or [])]
     return body.selected_candidate_url
 
 
@@ -119,7 +123,7 @@ def download(
     request: Request,
     model: Annotated[BaseChatModel, Depends(get_llm)],
     settings: Annotated[Settings, Depends(get_settings)],
-) -> CandidateReviewResponse | ChapterMapPromptResponse | SearchExhaustedResponse:
+) -> CandidateReviewResponse | ChapterMapReviewResponse | SearchExhaustedResponse:
     thread_id = str(uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     graph = create_graph(model, settings, request.app.state.checkpointer)
@@ -151,7 +155,7 @@ def resume(
 ) -> (
     DownloadCompleteResponse
     | CandidateReviewResponse
-    | ChapterMapPromptResponse
+    | ChapterMapReviewResponse
     | SearchExhaustedResponse
 ):
     config = {"configurable": {"thread_id": body.thread_id}}

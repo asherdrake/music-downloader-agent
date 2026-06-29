@@ -75,32 +75,6 @@ def _format_timestamp(total_seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-def read_chapter_map(path: Path) -> list[ChapterEntry]:
-    """Parse a plaintext Chapter Map into ``ChapterEntry`` objects.
-
-    Inverse of ``_write_chapter_map`` — reads ``START_TIME Track Name`` lines
-    (``HH:MM:SS``/``MM:SS`` timestamps). Blank lines and lines whose timestamp
-    does not parse are skipped, so a hand-written file with stray notes still
-    loads cleanly. Used when resuming from a ``chapter_map_prompt`` interrupt.
-    """
-    chapters: list[ChapterEntry] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        parts = stripped.split(maxsplit=1)
-        if len(parts) != 2:
-            continue
-        start_seconds = _parse_timestamp(parts[0])
-        track_name = parts[1].strip()
-        if start_seconds is None or not track_name:
-            continue
-        chapters.append(
-            ChapterEntry(start_seconds=start_seconds, track_name=track_name)
-        )
-    return chapters
-
-
 def _fetch_info_json(url: str) -> dict[str, Any]:
     """Single yt-dlp metadata dump feeding Levels 1 and 2 (no download)."""
     with yt_dlp.YoutubeDL(_INFO_OPTS) as ydl:

@@ -223,6 +223,44 @@
       .cue:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); }
       .cue:disabled { opacity: 0.4; cursor: not-allowed; }
 
+      /* ---- Chapter map review ---- */
+      .chapters { display: flex; flex-direction: column; gap: 12px; }
+      .chapters-head {
+        font-family: var(--mono);
+        font-size: 10.5px; letter-spacing: 0.22em; color: var(--ink-dim);
+        display: flex; align-items: center; gap: 10px;
+      }
+      .chapters-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+      .chap-sub { font-size: 13px; color: var(--ink-dim); margin: -4px 0 2px; }
+      .chap-table { display: flex; flex-direction: column; gap: 7px; }
+      .chap-row { display: flex; align-items: center; gap: 8px; }
+      .chap-idx {
+        font-family: var(--mono); font-size: 11px; color: var(--ink-dim);
+        width: 22px; text-align: right; flex: none;
+      }
+      .chap-row input {
+        background: var(--card); border: 1px solid var(--line);
+        border-radius: 8px; color: var(--ink);
+        padding: 8px 10px; font-family: var(--body); font-size: 14px;
+        min-width: 0;
+      }
+      .chap-row input:focus { border-color: rgba(30,215,96,.5); outline: none; }
+      .chap-row input.ts { width: 92px; flex: none; font-family: var(--mono); font-size: 13px; }
+      .chap-row input.ts.bad { border-color: rgba(231,178,76,.7); }
+      .chap-row input.title { flex: 1; }
+      .chap-btn {
+        width: 30px; height: 30px; flex: none;
+        border: 1px solid var(--line); border-radius: 8px;
+        background: var(--card); color: var(--ink-dim);
+        font-family: var(--mono); font-size: 16px; line-height: 1; cursor: pointer;
+        display: grid; place-items: center;
+        transition: color 0.15s ease, border-color 0.15s ease;
+      }
+      .chap-btn:hover:not(:disabled) { color: var(--ink); border-color: rgba(30,215,96,.4); }
+      .chap-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+      .chap-foot { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+      .chap-hint { flex: 1; font-size: 12.5px; color: var(--tape); }
+
       /* ---- Filed / completion ---- */
       .filed {
         display: flex; gap: 14px; align-items: flex-start;
@@ -330,9 +368,21 @@
         { key: "evaluate_candidates", label: "Scoring candidates", state: "pending" },
         { key: "__await", label: "Awaiting your pick", state: "pending" },
       ];
-      const RESUME_STAGES = () => [
+      // Track / Playlist-Source picks download immediately after the pick.
+      const RESUME_STAGES_DIRECT = () => [
         { key: "candidate_review", label: "Source cued", state: "active" },
         { key: "download", label: "Downloading audio", state: "pending" },
+        { key: "inject_metadata", label: "Tagging & artwork from Discogs", state: "pending" },
+      ];
+      // Compilation Source picks resolve timestamps, then pause for review —
+      // download/tagging only happen after the tracklist is confirmed.
+      const RESUME_STAGES_REVIEW = () => [
+        { key: "candidate_review", label: "Source cued", state: "active" },
+        { key: "resolve_timestamps", label: "Resolving track timestamps", state: "pending" },
+        { key: "__await_review", label: "Awaiting tracklist confirmation", state: "pending" },
+      ];
+      const CONFIRM_STAGES = () => [
+        { key: "download", label: "Downloading & splitting", state: "active" },
         { key: "inject_metadata", label: "Tagging & artwork from Discogs", state: "pending" },
       ];
 
@@ -396,6 +446,82 @@
         }
       }
 
+      // Parse "MM:SS" / "HH:MM:SS" to seconds, or null if malformed.
+      const TS_RE = /^(?:(\d+):)?([0-5]?\d):([0-5]\d)$/;
+      function parseTs(text) {
+        const m = TS_RE.exec((text ?? "").trim());
+        if (!m) return null;
+        const hh = m[1] ? parseInt(m[1], 10) : 0;
+        return hh * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10);
+      }
+
+      // Validate edited rows: every timestamp parses, titles non-empty, and the
+      // timestamps strictly increase (a flat/backwards pair would make a
+      // zero-length split that ffmpeg rejects). Returns a per-row bad-ts mask
+      // plus a single human hint for the first problem.
+      function validateRows(rows) {
+        const badTs = rows.map((r) => parseTs(r.start_time) === null);
+        if (rows.length === 0) return { ok: false, badTs, hint: "Add at least one track." };
+        let prev = -1;
+        for (let i = 0; i < rows.length; i++) {
+          const secs = parseTs(rows[i].start_time);
+          if (secs === null) return { ok: false, badTs, hint: `Row ${i + 1}: timestamp must be M:SS or H:MM:SS.` };
+          if (!(rows[i].track_name || "").trim()) return { ok: false, badTs, hint: `Row ${i + 1}: title can't be empty.` };
+          if (secs <= prev) return { ok: false, badTs, hint: `Row ${i + 1}: timestamp must be later than the row above.` };
+          prev = secs;
+        }
+        return { ok: true, badTs, hint: "" };
+      }
+
+      function ChapterEditor({ threadId, initialRows, method, busy, onConfirm }) {
+        const seed = initialRows && initialRows.length
+          ? initialRows.map((r) => ({ start_time: r.start_time || "", track_name: r.track_name || "" }))
+          : [{ start_time: "", track_name: "" }];
+        const [rows, setRows] = useState(seed);
+
+        const setCell = (i, key, val) =>
+          setRows((rs) => rs.map((r, k) => (k === i ? { ...r, [key]: val } : r)));
+        const deleteRow = (i) =>
+          setRows((rs) => (rs.length > 1 ? rs.filter((_, k) => k !== i) : rs));
+        const insertAfter = (i) =>
+          setRows((rs) => [...rs.slice(0, i + 1), { start_time: "", track_name: "" }, ...rs.slice(i + 1)]);
+
+        const { ok, badTs, hint } = validateRows(rows);
+
+        return html`<div class="chapters">
+          <div class="chapters-head">REVIEW TRACKLIST${method ? ` · ${method}` : ""}</div>
+          <p class="chap-sub">
+            Check the splits below — edit timestamps or titles, add or remove rows, then confirm.
+          </p>
+          <div class="chap-table">
+            ${rows.map((r, i) => html`<div class="chap-row" key=${i}>
+              <span class="chap-idx">${i + 1}</span>
+              <input
+                class="ts ${badTs[i] ? "bad" : ""}"
+                type="text" placeholder="0:00" value=${r.start_time}
+                disabled=${busy}
+                onInput=${(e) => setCell(i, "start_time", e.target.value)}
+              />
+              <input
+                class="title" type="text" placeholder="Track title" value=${r.track_name}
+                disabled=${busy}
+                onInput=${(e) => setCell(i, "track_name", e.target.value)}
+              />
+              <button class="chap-btn" title="Delete row" disabled=${busy || rows.length <= 1}
+                onClick=${() => deleteRow(i)}>−</button>
+              <button class="chap-btn" title="Insert row below" disabled=${busy}
+                onClick=${() => insertAfter(i)}>+</button>
+            </div>`)}
+          </div>
+          <div class="chap-foot">
+            <span class="chap-hint">${hint}</span>
+            <button class="cue" disabled=${busy || !ok} onClick=${() => onConfirm(threadId, rows)}>
+              Confirm & split
+            </button>
+          </div>
+        </div>`;
+      }
+
       function App() {
         const [messages, setMessages] = useState([]);
         const [input, setInput] = useState("");
@@ -430,6 +556,12 @@
           scrollSoon();
         }, [scrollSoon]);
 
+        // Mark every stage of the current run done — used when a human-in-the-loop
+        // step is satisfied (pick made / tracklist confirmed) before the next run.
+        const finishRun = useCallback(() => {
+          updateRun((m) => ({ ...m, stages: m.stages.map((s) => ({ ...s, state: "done" })) }));
+        }, [updateRun]);
+
         // Drive one SSE stream (start or resume) and route each event to the UI.
         async function consume(response) {
           for await (const event of readSSE(response)) {
@@ -448,6 +580,21 @@
                   kind: "picks",
                   thread_id: event.payload.thread_id,
                   candidates: event.payload.candidates || [],
+                  target_type: event.payload.target_type,
+                });
+              } else if (event.interrupt_type === "chapter_map_review") {
+                setPhase("awaiting");
+                updateRun((m) => ({
+                  ...m,
+                  stages: m.stages.map((s) =>
+                    s.key === "__await_review" ? { ...s, state: "active" } : { ...s, state: "done" }
+                  ),
+                }));
+                pushMsg({
+                  kind: "chapters",
+                  thread_id: event.payload.thread_id,
+                  rows: event.payload.rows || [],
+                  method: event.payload.method,
                 });
               } else {
                 updateRun((m) => ({ ...m, stages: m.stages.map((s) => ({ ...s, state: "done" })) }));
@@ -494,15 +641,36 @@
           }
         }
 
-        async function selectCandidate(threadId, url) {
+        async function selectCandidate(threadId, url, needsReview) {
           setBusy(true);
           setPhase("downloading");
-          beginRun(RESUME_STAGES());
+          finishRun(); // the pick resolves the "Awaiting your pick" stage
+          beginRun(needsReview ? RESUME_STAGES_REVIEW() : RESUME_STAGES_DIRECT());
           try {
             const response = await fetch("/resume/stream", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ thread_id: threadId, selected_candidate_url: url }),
+            });
+            await consume(response);
+          } catch (err) {
+            setPhase("idle");
+            pushMsg({ kind: "note", tag: "CONNECTION LOST", text: `Couldn't reach the agent: ${err.message}` });
+          } finally {
+            setBusy(false);
+          }
+        }
+
+        async function confirmChapters(threadId, rows) {
+          setBusy(true);
+          setPhase("downloading");
+          finishRun(); // confirming resolves the "Awaiting tracklist confirmation" stage
+          beginRun(CONFIRM_STAGES());
+          try {
+            const response = await fetch("/resume/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ thread_id: threadId, chapter_map: rows }),
             });
             await consume(response);
           } catch (err) {
@@ -563,11 +731,27 @@
                       <span class="meter-val">${(c.confidence_score ?? 0).toFixed(2)}</span>
                     </div>
                   </div>
-                  <button class="cue" disabled=${busy} onClick=${() => selectCandidate(msg.thread_id, c.url)}>
+                  <button class="cue" disabled=${busy} onClick=${() =>
+                    selectCandidate(
+                      msg.thread_id,
+                      c.url,
+                      msg.target_type === "Album" && !c.is_playlist
+                    )}>
                     Use this source
                   </button>
                 </div>`;
               })}
+            </div>`;
+          }
+          if (msg.kind === "chapters") {
+            return html`<div class="turn" key=${msg.id}>
+              <${ChapterEditor}
+                threadId=${msg.thread_id}
+                initialRows=${msg.rows}
+                method=${msg.method}
+                busy=${busy}
+                onConfirm=${confirmChapters}
+              />
             </div>`;
           }
           if (msg.kind === "filed") {
