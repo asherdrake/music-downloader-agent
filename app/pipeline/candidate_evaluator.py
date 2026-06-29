@@ -104,7 +104,7 @@ def _score_source_quality(channel_name: str, artist: str) -> float:
 
 
 def evaluate_candidates(
-    candidates: list[Candidate], intent: DownloadIntent, top_k: int = 5
+    candidates: list[Candidate], intent: DownloadIntent, top_k: int = 10
 ) -> list[ScoredCandidate]:
     scored_candidates: list[ScoredCandidate] = []
 
@@ -135,10 +135,6 @@ def evaluate_candidates(
             )
         )
 
-    playlist_scored = [sc for sc in scored_candidates if sc.is_playlist]
-    video_scored = [sc for sc in scored_candidates if not sc.is_playlist]
+    scored_candidates.sort(key=lambda sc: sc.confidence_score, reverse=True)
 
-    playlist_scored.sort(key=lambda sc: sc.confidence_score, reverse=True)
-    video_scored.sort(key=lambda sc: sc.confidence_score, reverse=True)
-
-    return playlist_scored + video_scored[:top_k]
+    return scored_candidates[:top_k]
