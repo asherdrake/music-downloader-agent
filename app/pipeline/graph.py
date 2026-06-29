@@ -1,14 +1,13 @@
-from pathlib import Path
-
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from app.clients.discogs import DiscogsClient, get_discogs_client
+from app.clients.discogs import DiscogsAPIError, DiscogsClient, get_discogs_client
 from app.core.config import Settings
 from app.core.native_script import gather_native_variants
+from app.models.chapter_map import ChapterEntry
 from app.models.pipeline_state import PipelineState
 from app.models.release import Release
 from app.pipeline.candidate_evaluator import evaluate_candidates
@@ -21,7 +20,11 @@ from app.pipeline.downloader import (
 )
 from app.pipeline.metadata_injector import fetch_artwork, inject_metadata
 from app.pipeline.request_parser import parse_request
-from app.pipeline.timestamp_resolver import read_chapter_map, resolve_timestamps
+from app.pipeline.timestamp_resolver import (
+    _format_timestamp,
+    _parse_timestamp,
+    resolve_timestamps,
+)
 
 _MAX_SEARCH_ITERATIONS: int = 3
 
@@ -49,17 +52,53 @@ def _selected_is_playlist(state: PipelineState) -> bool:
 
 def _route_after_review(state: PipelineState) -> str:
     """Track and Playlist-Source Albums download directly; Compilation Sources
-    (single-video Albums) need timestamp resolution first."""
+    (single-video Albums) go through timestamp resolution + chapter review."""
     intent = state["download_intent"]
+    print("ROUTE AFTER REVIEW INTENT:", intent)
     if intent.target_type == "Track" or _selected_is_playlist(state):
         return "download"
     return "resolve_timestamps"
 
 
-def _route_after_resolve(state: PipelineState) -> str:
-    if state.get("timestamp_method") == "manual_required":
-        return "chapter_map_prompt"
-    return "download"
+def _initial_rows(state: PipelineState) -> list[dict[str, str]]:
+    """Prefilled chapter rows for the review interrupt.
+
+    Prefers the chapters the resolver produced; falls back to the Discogs
+    tracklist titles (blank timestamps) when nothing was resolved, so the user
+    still has a scaffold to fill in. Always returns at least one row.
+    """
+    chapters = state.get("chapters") or []
+    if chapters:
+        return [
+            {
+                "start_time": _format_timestamp(chapter.start_seconds),
+                "track_name": chapter.track_name,
+            }
+            for chapter in chapters
+        ]
+    release = state.get("release")
+    if release is not None and release.tracklist:
+        return [
+            {"start_time": "", "track_name": track.title} for track in release.tracklist
+        ]
+    return [{"start_time": "", "track_name": ""}]
+
+
+def _rows_to_chapters(rows: list[dict[str, str]]) -> list[ChapterEntry]:
+    """Parse user-edited review rows back into ChapterEntry objects.
+
+    Rows whose timestamp does not parse or whose title is blank are dropped.
+    """
+    chapters: list[ChapterEntry] = []
+    for row in rows:
+        start_seconds = _parse_timestamp(row.get("start_time", ""))
+        track_name = (row.get("track_name") or "").strip()
+        if start_seconds is None or not track_name:
+            continue
+        chapters.append(
+            ChapterEntry(start_seconds=start_seconds, track_name=track_name)
+        )
+    return chapters
 
 
 def create_graph(
@@ -67,21 +106,29 @@ def create_graph(
     settings: Settings,
     checkpointer: BaseCheckpointSaver,
 ) -> CompiledStateGraph:
-    def _fetch_release(state: PipelineState) -> Release:
+    def _fetch_release(state: PipelineState) -> Release | None:
+        """Best-effort Discogs lookup; ``None`` when nothing matches.
+
+        Concert/bootleg sources often have no Discogs release — that must not
+        abort the run, so a 404 degrades to no metadata rather than raising.
+        """
         intent = state["download_intent"]
         candidates = state.get("candidates") or state.get("scored_candidates") or []
         candidate_titles = [candidate.title for candidate in candidates]
-        return discogs_client.fetch_release(
-            artist=intent.artist,
-            title=intent.title,
-            edition=intent.edition,
-            artist_native_variants=gather_native_variants(
-                intent.artist, candidate_titles, intent.artist_native_variants
-            ),
-            title_native_variants=gather_native_variants(
-                intent.title, candidate_titles, intent.title_native_variants
-            ),
-        )
+        try:
+            return discogs_client.fetch_release(
+                artist=intent.artist,
+                title=intent.title,
+                edition=intent.edition,
+                artist_native_variants=gather_native_variants(
+                    intent.artist, candidate_titles, intent.artist_native_variants
+                ),
+                title_native_variants=gather_native_variants(
+                    intent.title, candidate_titles, intent.title_native_variants
+                ),
+            )
+        except DiscogsAPIError:
+            return None
 
     def parse_request_node(state: PipelineState) -> dict:
         download_intent = parse_request(state["request"], llm)
@@ -103,7 +150,10 @@ def create_graph(
 
     def candidate_review_node(state: PipelineState) -> dict:
         selected_url: str = interrupt(
-            {"candidates": state.get("scored_candidates", [])}
+            {
+                "candidates": state.get("scored_candidates", []),
+                "target_type": state["download_intent"].target_type,
+            }
         )
         return {"selected_candidate_url": selected_url}
 
@@ -126,17 +176,17 @@ def create_graph(
             "chapter_map_path": resolution.chapter_map_path,
         }
 
-    def chapter_map_prompt_node(state: PipelineState) -> dict:
-        release = state.get("release")
-        tracklist = [track.title for track in release.tracklist] if release else []
-        chapter_map_file_path: str = interrupt(
+    def chapter_map_review_node(state: PipelineState) -> dict:
+        edited_rows: list[dict[str, str]] = interrupt(
             {
-                "download_intent": state["download_intent"],
-                "tracklist": tracklist,
+                "rows": _initial_rows(state),
+                "method": state.get("timestamp_method"),
             }
         )
-        chapters = read_chapter_map(Path(chapter_map_file_path))
-        return {"chapters": chapters, "timestamp_method": "manual"}
+        return {
+            "chapters": _rows_to_chapters(edited_rows),
+            "timestamp_method": "reviewed",
+        }
 
     def download_node(state: PipelineState) -> dict:
         intent = state["download_intent"]
@@ -161,9 +211,17 @@ def create_graph(
         return {"download_result": result}
 
     def inject_metadata_node(state: PipelineState) -> dict:
-        release = state.get("release") or _fetch_release(state)
-        artwork_bytes = fetch_artwork(release.artwork_url)
-        result = inject_metadata(state["download_result"], release, artwork_bytes)
+        release = state.get("release")
+        # Track/Playlist paths never set timestamp_method, so they still fetch
+        # here as before; the compilation path already resolved release (possibly
+        # None) and must not re-search.
+        if release is None and not state.get("timestamp_method"):
+            release = _fetch_release(state)
+        if release is not None:
+            artwork_bytes = fetch_artwork(release.artwork_url)
+            result = inject_metadata(state["download_result"], release, artwork_bytes)
+        else:
+            result = state["download_result"]
         return {"download_result": result, "release": release}
 
     discogs_client: DiscogsClient = get_discogs_client()
@@ -174,7 +232,7 @@ def create_graph(
     builder.add_node("evaluate_candidates", evaluate_candidates_node)
     builder.add_node("candidate_review", candidate_review_node)
     builder.add_node("resolve_timestamps", resolve_timestamps_node)
-    builder.add_node("chapter_map_prompt", chapter_map_prompt_node)
+    builder.add_node("chapter_map_review", chapter_map_review_node)
     builder.add_node("download", download_node)
     builder.add_node("inject_metadata", inject_metadata_node)
 
@@ -198,15 +256,8 @@ def create_graph(
             "resolve_timestamps": "resolve_timestamps",
         },
     )
-    builder.add_conditional_edges(
-        "resolve_timestamps",
-        _route_after_resolve,
-        {
-            "chapter_map_prompt": "chapter_map_prompt",
-            "download": "download",
-        },
-    )
-    builder.add_edge("chapter_map_prompt", "download")
+    builder.add_edge("resolve_timestamps", "chapter_map_review")
+    builder.add_edge("chapter_map_review", "download")
     builder.add_edge("download", "inject_metadata")
     builder.add_edge("inject_metadata", END)
 

@@ -7,6 +7,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command, StateSnapshot
 from mutagen.id3 import ID3
 
+from app.clients.discogs import DiscogsAPIError
 from app.core.config import Settings
 from app.models.candidate import Candidate
 from app.models.chapter_map import ChapterEntry, TimestampResolution
@@ -435,6 +436,71 @@ def test_playlist_album_skips_timestamp_resolution(
         mock_playlist.assert_called_once()
 
 
+_EDITED_ROWS = [
+    {"start_time": "0:00", "track_name": "In the Flesh?"},
+    {"start_time": "3:21", "track_name": "The Thin Ice"},
+]
+
+
+@patch("app.pipeline.graph.get_discogs_client")
+@patch(
+    "app.pipeline.graph.resolve_timestamps",
+    return_value=TimestampResolution(method="native", chapters=_NATIVE_CHAPTERS),
+)
+@patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
+@patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
+@patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
+def test_compilation_suspends_at_review_prefilled_from_chapters(
+    mock_parse, mock_search, mock_eval, mock_resolve, mock_discogs
+):
+    """Every compilation (native included) pauses at the editable review,
+    prefilled with the resolved chapters as HH:MM:SS rows."""
+    mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
+    with SqliteSaver.from_conn_string(":memory:") as mem:
+        graph = _make_graph(mem)
+        config = _config("album_comp_review")
+        graph.invoke(_INITIAL_STATE, config)
+        graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
+
+        snapshot = graph.get_state(config)
+        assert snapshot.next == ("chapter_map_review",)
+        payload = snapshot.tasks[0].interrupts[0].value
+        assert payload["method"] == "native"
+        assert payload["rows"] == [
+            {"start_time": "00:00:00", "track_name": "In the Flesh?"},
+            {"start_time": "00:03:21", "track_name": "The Thin Ice"},
+        ]
+
+
+@patch("app.pipeline.graph.get_discogs_client")
+@patch(
+    "app.pipeline.graph.resolve_timestamps",
+    return_value=TimestampResolution(method="manual_required", chapters=[]),
+)
+@patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
+@patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
+@patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
+def test_review_prefills_from_tracklist_when_no_chapters(
+    mock_parse, mock_search, mock_eval, mock_resolve, mock_discogs
+):
+    """When all levels fail, the review table is scaffolded from the Discogs
+    tracklist titles with blank timestamps for the user to fill in."""
+    mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
+    with SqliteSaver.from_conn_string(":memory:") as mem:
+        graph = _make_graph(mem)
+        config = _config("album_comp_fail")
+        graph.invoke(_INITIAL_STATE, config)
+        graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
+
+        snapshot = graph.get_state(config)
+        assert snapshot.next == ("chapter_map_review",)
+        payload = snapshot.tasks[0].interrupts[0].value
+        assert payload["rows"] == [
+            {"start_time": "", "track_name": "In the Flesh?"},
+            {"start_time": "", "track_name": "The Thin Ice"},
+        ]
+
+
 @patch("app.pipeline.graph.inject_metadata", return_value=_ALBUM_DOWNLOAD_RESULT)
 @patch("app.pipeline.graph.fetch_artwork", return_value=None)
 @patch("app.pipeline.graph.get_discogs_client")
@@ -446,7 +512,7 @@ def test_playlist_album_skips_timestamp_resolution(
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
-def test_compilation_native_routes_straight_to_download(
+def test_review_resume_with_edited_rows_splits_and_completes(
     mock_parse,
     mock_search,
     mock_eval,
@@ -459,79 +525,12 @@ def test_compilation_native_routes_straight_to_download(
     mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
     with SqliteSaver.from_conn_string(":memory:") as mem:
         graph = _make_graph(mem)
-        config = _config("album_comp_native")
+        config = _config("album_comp_confirm")
         graph.invoke(_INITIAL_STATE, config)
         graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
+        assert graph.get_state(config).next == ("chapter_map_review",)
 
-        snapshot = graph.get_state(config)
-        assert not snapshot.next  # never suspended at chapter_map_prompt
-        mock_resolve.assert_called_once()
-        mock_compilation.assert_called_once()
-        assert mock_compilation.call_args[0][2] == _NATIVE_CHAPTERS
-
-
-@patch("app.pipeline.graph.get_discogs_client")
-@patch(
-    "app.pipeline.graph.resolve_timestamps",
-    return_value=TimestampResolution(method="manual_required", chapters=[]),
-)
-@patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
-@patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
-@patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
-def test_all_levels_fail_suspends_at_chapter_map_prompt(
-    mock_parse, mock_search, mock_eval, mock_resolve, mock_discogs
-):
-    mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
-    with SqliteSaver.from_conn_string(":memory:") as mem:
-        graph = _make_graph(mem)
-        config = _config("album_comp_fail")
-        graph.invoke(_INITIAL_STATE, config)
-        graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
-
-        snapshot = graph.get_state(config)
-        assert snapshot.next == ("chapter_map_prompt",)
-        payload = snapshot.tasks[0].interrupts[0].value
-        assert payload["download_intent"] == _ALBUM_INTENT
-        assert payload["tracklist"] == ["In the Flesh?", "The Thin Ice"]
-
-
-@patch("app.pipeline.graph.inject_metadata", return_value=_ALBUM_DOWNLOAD_RESULT)
-@patch("app.pipeline.graph.fetch_artwork", return_value=None)
-@patch("app.pipeline.graph.get_discogs_client")
-@patch("app.pipeline.graph.download_compilation", return_value=_ALBUM_DOWNLOAD_RESULT)
-@patch(
-    "app.pipeline.graph.resolve_timestamps",
-    return_value=TimestampResolution(method="manual_required", chapters=[]),
-)
-@patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
-@patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
-@patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
-def test_manual_chapter_map_resume_splits_and_completes(
-    mock_parse,
-    mock_search,
-    mock_eval,
-    mock_resolve,
-    mock_compilation,
-    mock_discogs,
-    mock_art,
-    mock_inject,
-    tmp_path: Path,
-):
-    mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
-    map_path = tmp_path / "manual_chapters.txt"
-    map_path.write_text(
-        "00:00:00 In the Flesh?\n00:03:21 The Thin Ice\n", encoding="utf-8"
-    )
-
-    with SqliteSaver.from_conn_string(":memory:") as mem:
-        graph = _make_graph(mem)
-        config = _config("album_comp_manual")
-        graph.invoke(_INITIAL_STATE, config)
-        graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
-        assert graph.get_state(config).next == ("chapter_map_prompt",)
-
-        # Real read_chapter_map parses the supplied file into chapters.
-        graph.invoke(Command(resume=str(map_path)), config)
+        graph.invoke(Command(resume=_EDITED_ROWS), config)
 
         snapshot = graph.get_state(config)
         assert not snapshot.next
@@ -550,13 +549,55 @@ def test_manual_chapter_map_resume_splits_and_completes(
 @patch("app.pipeline.graph.download_compilation", return_value=_ALBUM_DOWNLOAD_RESULT)
 @patch(
     "app.pipeline.graph.resolve_timestamps",
-    return_value=TimestampResolution(method="manual_required", chapters=[]),
+    return_value=TimestampResolution(method="native", chapters=_NATIVE_CHAPTERS),
+)
+@patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
+@patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
+@patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
+def test_compilation_without_discogs_release_skips_tagging(
+    mock_parse,
+    mock_search,
+    mock_eval,
+    mock_resolve,
+    mock_compilation,
+    mock_discogs,
+    mock_art,
+    mock_inject,
+):
+    """A concert/bootleg with no Discogs match still splits + reviews; tagging is
+    skipped (release stays None) instead of crashing at fetch_release."""
+    mock_discogs.return_value.fetch_release.side_effect = DiscogsAPIError(
+        404, "No results found"
+    )
+    with SqliteSaver.from_conn_string(":memory:") as mem:
+        graph = _make_graph(mem)
+        config = _config("album_comp_no_release")
+        graph.invoke(_INITIAL_STATE, config)
+        graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
+        assert graph.get_state(config).next == ("chapter_map_review",)
+
+        graph.invoke(Command(resume=_EDITED_ROWS), config)
+
+        snapshot = graph.get_state(config)
+        assert not snapshot.next
+        mock_compilation.assert_called_once()
+        mock_inject.assert_not_called()  # no release -> tagging skipped
+        assert snapshot.values["release"] is None
+
+
+@patch("app.pipeline.graph.inject_metadata", return_value=_ALBUM_DOWNLOAD_RESULT)
+@patch("app.pipeline.graph.fetch_artwork", return_value=None)
+@patch("app.pipeline.graph.get_discogs_client")
+@patch("app.pipeline.graph.download_compilation", return_value=_ALBUM_DOWNLOAD_RESULT)
+@patch(
+    "app.pipeline.graph.resolve_timestamps",
+    return_value=TimestampResolution(method="native", chapters=_NATIVE_CHAPTERS),
 )
 @patch("app.pipeline.graph.evaluate_candidates", return_value=[_COMP_SCORED])
 @patch("app.pipeline.graph.search_candidates", return_value=[_COMP_CANDIDATE])
 @patch("app.pipeline.graph.parse_request", return_value=_ALBUM_INTENT)
 @patch("main.get_llm", return_value=MagicMock())
-def test_api_chapter_map_prompt_then_manual_resume(
+def test_api_chapter_map_review_then_resume_rows(
     mock_llm,
     mock_parse,
     mock_search,
@@ -567,29 +608,27 @@ def test_api_chapter_map_prompt_then_manual_resume(
     mock_art,
     mock_inject,
     api_client,
-    tmp_path: Path,
 ):
     mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
     dl = api_client.post("/download", json={"request": "Pink Floyd The Wall album"})
     thread_id = dl.json()["thread_id"]
     assert dl.json()["status"] == "candidate_review"
 
-    prompt = api_client.post(
+    review = api_client.post(
         "/resume",
         json={"thread_id": thread_id, "selected_candidate_url": _COMP_CANDIDATE.url},
     )
-    assert prompt.status_code == 200
-    prompt_data = prompt.json()
-    assert prompt_data["status"] == "chapter_map_prompt"
-    assert prompt_data["tracklist"] == ["In the Flesh?", "The Thin Ice"]
+    assert review.status_code == 200
+    review_data = review.json()
+    assert review_data["status"] == "chapter_map_review"
+    assert review_data["rows"] == [
+        {"start_time": "00:00:00", "track_name": "In the Flesh?"},
+        {"start_time": "00:03:21", "track_name": "The Thin Ice"},
+    ]
 
-    map_path = tmp_path / "api_chapters.txt"
-    map_path.write_text(
-        "00:00:00 In the Flesh?\n00:03:21 The Thin Ice\n", encoding="utf-8"
-    )
     done = api_client.post(
         "/resume",
-        json={"thread_id": thread_id, "chapter_map_file_path": str(map_path)},
+        json={"thread_id": thread_id, "chapter_map": _EDITED_ROWS},
     )
     assert done.status_code == 200
     assert done.json()["status"] == "completed"
@@ -617,8 +656,8 @@ def test_compilation_pipeline_writes_tagged_tracks_end_to_end(
     mock_art,
     tmp_path: Path,
 ):
-    """Resume runs the REAL download_compilation + metadata injector through the
-    graph and produces correctly-tagged split .mp3s in <Artist>/<Album>/."""
+    """Confirming the review runs the REAL download_compilation + metadata
+    injector through the graph and produces tagged split .mp3s."""
     mock_discogs.return_value.fetch_release.return_value = _ALBUM_RELEASE
     settings = Settings(confidence_threshold=0.7, local_files_directory=tmp_path)
     album = tmp_path / "Pink Floyd" / "The Wall"
@@ -636,6 +675,8 @@ def test_compilation_pipeline_writes_tagged_tracks_end_to_end(
         config = _config("album_comp_e2e")
         graph.invoke(_INITIAL_STATE, config)
         graph.invoke(Command(resume=_COMP_CANDIDATE.url), config)
+        assert graph.get_state(config).next == ("chapter_map_review",)
+        graph.invoke(Command(resume=_EDITED_ROWS), config)
 
         snapshot = graph.get_state(config)
         assert not snapshot.next

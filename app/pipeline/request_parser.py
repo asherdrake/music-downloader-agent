@@ -7,7 +7,7 @@ _SYSTEM_PROMPT = """\
 You are a music download intent parser. Given a free-form user request, extract structured information.
 
 Rules:
-- target_type: "Track" for a single song; "Album" for a full album, EP, or LP
+- target_type: "Track" for a single song; "Album" for anything with multiple Tracks that needs splitting: a full album, EP, LP, concert, or compilation
 - artist: the performing artist name
 - title: the track or album title
 - resource_hint: any URL in the request (YouTube, SoundCloud, Bandcamp, etc.), or null if none present
